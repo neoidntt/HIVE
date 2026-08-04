@@ -1,0 +1,27 @@
+# Exact versions HIVE 2.0 was developed and verified against.
+# Install this (not requirements.txt) when you need a reproducible analysis
+# environment -- e.g. re-running an analysis for a revision or a reviewer.
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements-lock.txt
+#
+# Test suite status against these versions: 65 passed, 0 failed, 0 deprecation
+# warnings from HIVE code (verified 2026-07-16 on macOS/arm64, Python 3.14).
+
+numpy==2.5.1
+scipy==1.18.0
+scikit-image==0.26.0
+pandas==3.0.3
+tifffile==2026.7.14
+matplotlib==3.11.0
+pillow==12.3.0
+plotly==6.9.0
+openpyxl==3.1.5
+
+streamlit==1.59.2
+fastapi==0.139.2
+uvicorn==0.51.0
+python-multipart==0.0.32
+
+pytest==9.1.1
