@@ -31,7 +31,7 @@ def parse_args():
         2D image folders, ``--zstack`` for 3D stacks -- so passing ``--input``
         with ``--mode 3d`` is silently ignored.
     """
-    parser = argparse.ArgumentParser(description="HIVE: High-Precision Image Visualization Engine")
+    parser = argparse.ArgumentParser(description="HIVE: High-Processing Imaging Visualization Engine")
     parser.add_argument("--mode", default="2d", choices=["2d", "3d"], help="Use 2d for images or 3d for z-stacks.")
     parser.add_argument("--input", default="input_images", help="Input image folder for 2D mode")
     parser.add_argument("--zstack", default="input_zstacks", help="Z-stack folder or multi-page TIFF for 3D mode")

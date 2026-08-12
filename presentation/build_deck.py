@@ -104,7 +104,7 @@ rect(s, 0, 0, SW, SH, NAVY)
 rect(s, 0, Inches(3.02), Inches(1.6), Inches(0.09), YELLOW, )
 textbox(s, "HIVE", Inches(1.1), Inches(1.9), Inches(11), Inches(1.1),
         size=62, color=WHITE, bold=True)
-textbox(s, "High-Precision Image Visualization Engine", Inches(1.12), Inches(3.25),
+textbox(s, "High-Processing Imaging Visualization Engine", Inches(1.12), Inches(3.25),
         Inches(11), Inches(0.6), size=25, color=YELLOW)
 textbox(s,
         "Segmentation  ·  intensity quantification  ·  arborization (Sholl)  ·  3D reconstruction\n"

@@ -1,4 +1,4 @@
-"""HIVE: High-Precision Image Visualization Engine.
+"""HIVE: High-Processing Imaging Visualization Engine.
 
 A general-purpose fluorescence microscopy analysis package: segmentation,
 intensity quantification, arborization (Sholl) analysis, 3D reconstruction

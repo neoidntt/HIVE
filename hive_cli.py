@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         The configured parser.
     """
     parser = argparse.ArgumentParser(
-        description="HIVE: High-Precision Image Visualization Engine",
+        description="HIVE: High-Processing Imaging Visualization Engine",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--mode", default="2d", choices=["2d", "3d"])

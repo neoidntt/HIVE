@@ -7,7 +7,7 @@
 cd "$(dirname "$0")" || exit 1
 
 echo "======================================================"
-echo "  HIVE — High-Precision Image Visualization Engine"
+echo "  HIVE — High-Processing Imaging Visualization Engine"
 echo "======================================================"
 echo "  project: $(pwd)"
 echo ""
