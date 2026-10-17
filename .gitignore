@@ -1,0 +1,69 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Test / tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- Secrets ---
+.env
+.env.*
+*.key
+*.pem
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.Rhistory
+# Office lock files, e.g. ~$HIVE_overview.pptx
+~$*
+
+# --- Generated analysis output -------------------------------------------
+# Everything below is produced by running HIVE and is reproducible from the
+# source in this repository. It is excluded because it is data, not code:
+# the demo outputs alone are ~300 MB (four 60 MB TIFF volumes, a 30 MB
+# self-contained Plotly viewer and a 29 MB OBJ mesh), which would bloat the
+# repository permanently and exceed GitHub's file-size warning threshold.
+#
+# Regenerate with:
+#   python hive_cli.py --mode 3d --input <your stack> --gif
+#   jupyter lab HIVE_walkthrough.ipynb
+bee1004_demo/
+bee1004_results/
+notebook_output/
+output_runs/
+api_jobs/
+output_results/
+input_images/
+input_zstacks/
+
+# Presentation artifacts are rebuilt by presentation/make_sample.py,
+# make_figures.py and build_deck.py -- the generators are tracked, not
+# their output.
+presentation/results/
+presentation/figures/
+presentation/sample_data/
+presentation/_2d_only/
+presentation/*.pptx
+
+# --- Large binary formats anywhere in the tree ---
+# HIVE reads and writes these; none of them are source.
+*.tif
+*.tiff
+*.czi
+*.obj
+*.gif
+*.zip
