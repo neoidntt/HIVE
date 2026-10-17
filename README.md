@@ -8,6 +8,59 @@ Nothing in the pipeline assumes a particular biology.
 
 ---
 
+## Changes in the `Improvements` branch
+
+This branch compares against `main` as follows. The analysis pipeline in `hive/` is unchanged
+apart from one new module; the work is in the Streamlit app, a new test file and the notebooks.
+
+### Streamlit app (`app.py`)
+
+- **Built-in synthetic demo.** The sidebar has a new *Data source* choice, *Synthetic demo* or
+  *Upload files*. The demo needs no uploads, so the app can be tried straight away in 2D or 3D mode.
+  A *Synthetic data seed* input makes the sample images repeatable.
+- **Runs itself.** `python app.py` now relaunches itself through `streamlit run` when it is not
+  already running inside Streamlit.
+- **Safer uploads.** Uploaded file names are reduced to their base name (no path tricks), and
+  duplicate names get a numeric suffix instead of overwriting each other.
+- **Stale results are cleared.** The app records a signature of the data source, mode, seed,
+  settings and uploaded files. Changing any of them discards the old result and asks you to press
+  *Run analysis* again, so a result never sits next to settings that did not produce it.
+- **Cleaner runs.** The input and output folders are recreated on every run, and the app now shows
+  any error from the pipeline, not only file, value and import errors.
+- **Better 2D → 3D projection.** When a stack is collapsed to 2D, labels are taken from the plane
+  where each pixel is brightest. Before, labels and intensity were each reduced with `max` separately.
+- **New results display.**
+  - *2D image inspection*: pick an image and see its measurement image next to its boundary overlay.
+  - *Interactive measurement plots*: Plotly scatter plot with selectable axes, plus a histogram of
+    mean intensity.
+  - *3D point cloud*: an interactive view of segmented voxels, with a slider that limits how many
+    points are drawn.
+  - An **Excel report** download button (`HIVE_2D_report.xlsx` or `HIVE_3D_report.xlsx`) next to
+    the existing downloads.
+
+### New files
+
+- `hive/synthetic.py` generates the reproducible demo data: three 160×160 fields with six
+  cell-like objects each (dim, reference and bright), and a 20×90×90 anisotropic z-stack with a
+  sphere and a bar.
+- `tests/test_frontend_demo.py` tests the app with Streamlit's `AppTest`: the phantoms are
+  reproducible, the 2D and 3D demos run end to end, and an uploaded TIFF runs through the 2D app.
+
+### Launcher and notebooks
+
+- `Run HIVE App.command` tries the project's own `.venv/bin/python` before any system Python.
+- `HIVE_walkthrough.ipynb` is saved with its outputs (29 executed code cells). Same 47 cells as
+  `main`, but the file grows from about 63 KB to about 2 MB.
+- `Bee1004_DEMO.ipynb` was re-run on a machine where the example TIFF is missing, so its first
+  cell now stores a `FileNotFoundError` instead of the file report. It needs re-running with the
+  data present.
+- `Bee1004_DEMO_annotated.ipynb` and `Bee1004_analysis.ipynb` only have notebook metadata changes
+  (kernel name and language info).
+- `.agents/skills/developing-with-streamlit` was added. It is a symlink into `.venv`, which is not
+  committed, so it is broken in a fresh clone.
+
+---
+
 ## Read this first: how HIVE measures
 
 Fluorescence analysis asks two questions that want **opposite** things from the data:
