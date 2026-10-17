@@ -56,8 +56,6 @@ apart from one new module; the work is in the Streamlit app, a new test file and
   data present.
 - `Bee1004_DEMO_annotated.ipynb` and `Bee1004_analysis.ipynb` only have notebook metadata changes
   (kernel name and language info).
-- `.agents/skills/developing-with-streamlit` was added. It is a symlink into `.venv`, which is not
-  committed, so it is broken in a fresh clone.
 
 ---
 
