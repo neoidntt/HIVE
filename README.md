@@ -57,6 +57,59 @@ apart from one new module; the work is in the Streamlit app, a new test file and
 - `Bee1004_DEMO_annotated.ipynb` and `Bee1004_analysis.ipynb` only have notebook metadata changes
   (kernel name and language info).
 
+## Future improvements
+
+Planned next steps, roughly grouped. Nothing here is implemented yet.
+
+### Planned
+
+- **Better machine-learning segmentation (Cellpose).** Cellpose is already available as an optional
+  `--method cellpose` in the command line. The next step is to bring it into the Streamlit app
+  with a model picker, GPU use when available, and the option to fine-tune a model on a lab's
+  own corrected masks. Add other models (such as StarDist) for comparison, and benchmark
+  them against Otsu + watershed on the synthetic data.
+- **Quality control.** Check every image before analysis and flag problems instead of silently
+  measuring them: out-of-focus or blurry planes, saturated pixels, empty or nearly empty
+  fields, heavy noise, uneven illumination, missing or implausible voxel sizes, and
+  objects the pipeline could not identify with confidence. Show a pass/warn/fail summary
+  in the app and write it to the report.
+- **Upload a whole folder in the Streamlit app.** Let users point the app at a folder (or drop
+  one in) instead of selecting files one by one, with batch progress, a file list and the
+  option to skip files that do not match.
+- **Interactive preprocessing and segmentation correction, optional.** After the automatic
+  run, offer the user the choice to review and correct the result, or to accept it as is.
+  Corrections would include adjusting preprocessing live with a preview, merging or splitting
+  objects, deleting false detections, drawing missed ones, and re-measuring from the corrected
+  labels. Corrections should be saved so they can be reused or used as training data.
+- **Timelapse microscopy analysis.** Support time series (T×Z×Y×X) so users can watch how cells
+  change over time:
+  - track cell movement and report speed, distance and direction;
+  - follow growth, in area or volume, per cell;
+  - follow arborization over time (Sholl curves, branch counts and lengths, extension and
+    retraction of processes), such as honeybee brain cells in action;
+  - detect divisions, merges and cells entering or leaving the field;
+  - show tracks as an animation and as per-cell plots.
+
+### Other ideas
+
+- **Saved settings and reproducibility.** Save every run's settings, software versions and seed
+  in the output folder and reload them, so any result can be reproduced.
+- **Multi-channel analysis.** Choose and measure more than one channel, with colocalization
+  statistics between channels.
+- **Group comparison and statistics.** Label images by condition and get comparison plots and
+  basic statistics (effect sizes, with tests that suit the sample size) in the report.
+- **Background subtraction preview.** Show the effect of each background method on the image
+  before running the whole analysis.
+- **Large images.** Tiled or chunked processing for stacks that do not fit in memory, rather than
+  refusing them.
+- **More input formats.** Direct support for more microscope formats (for example LIF, ND2 and
+  OME-TIFF) with voxel size and channel names read from metadata.
+- **Export options.** Export labels as ImageJ ROIs and OME-TIFF so results open in Fiji and napari.
+- **Automated checks.** Continuous integration that runs the test suite on every push, and tests
+  for the new features as they are added.
+- **Easier install.** One-step packaging (a conda environment file or installer) so the
+  app can be started without using the command line.
+
 ---
 
 ## Read this first: how HIVE measures
