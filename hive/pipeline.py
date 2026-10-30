@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import reporting
+from . import channels, exports, formats, provenance, reporting, stats
 from .arborization import analyze_arbor, skeleton_metrics
 from .cleanup import CleanupReport, clean_labels
 from .config import HiveConfig
@@ -25,6 +25,7 @@ from .io_utils import collect_image_paths, load_image, load_zstack, save_uint8, 
 from .measurements import measure_objects, summarize_measurements
 from .preprocessing import PreparedImage, prepare_image, prepare_volume
 from .segmentation import segment
+from .tiled import analyze_zstack_tiled, needs_tiling
 from .visualization import (
     create_3d_mesh_html, create_boundary_overlay, create_label_overlay,
     create_skeleton_overlay, export_obj,
@@ -41,7 +42,8 @@ class AnalysisResult:
         measurements: Per-object table (morphology + arborisation).
         summary: One-row per-image summary.
         labels: Final cleaned label array.
-        prepared: The measurement/segmentation image pair.
+        prepared: The measurement/segmentation image pair (``None`` for tiled runs,
+            which never hold the whole corrected volume).
         sholl_curves: Mapping of label -> ``ShollResult``.
         cleanup: What mask cleanup removed.
         skeleton: Combined skeleton of all objects, for overlays.
@@ -52,7 +54,7 @@ class AnalysisResult:
     measurements: pd.DataFrame
     summary: pd.DataFrame
     labels: np.ndarray = field(repr=False)
-    prepared: PreparedImage = field(repr=False)
+    prepared: PreparedImage | None = field(repr=False)
     sholl_curves: dict = field(default_factory=dict, repr=False)
     cleanup: CleanupReport = field(default_factory=CleanupReport)
     skeleton: np.ndarray | None = field(default=None, repr=False)
@@ -80,7 +82,10 @@ def _spacing(cfg: HiveConfig, is_3d: bool) -> tuple[float, ...] | float:
     return cfg.voxel_size_xy
 
 
-def analyze_array(image: np.ndarray, name: str, cfg: HiveConfig) -> AnalysisResult:
+def analyze_array(
+    image: np.ndarray, name: str, cfg: HiveConfig,
+    extras: dict[str, np.ndarray] | None = None, channel_name: str | None = None,
+) -> AnalysisResult:
     """Run the full 2D pipeline on an in-memory image.
 
     Steps: channel select -> baseline subtract (measurement image) -> enhance
@@ -94,6 +99,10 @@ def analyze_array(image: np.ndarray, name: str, cfg: HiveConfig) -> AnalysisResu
         image: Raw 2D or channel-last image, in its original intensity scale.
         name: Name recorded in the ``image`` column.
         cfg: Run configuration.
+        extras: Further channels to measure, by name. ``None`` takes
+            ``cfg.extra_channels`` from ``image`` when it is a colour image.
+        channel_name: Name to record for the analysed channel when ``image`` is
+            already a single plane taken from a named channel.
 
     Returns:
         An :class:`AnalysisResult`.
@@ -103,6 +112,8 @@ def analyze_array(image: np.ndarray, name: str, cfg: HiveConfig) -> AnalysisResu
         ValueError: If the image shape is unsupported.
     """
     prepared = prepare_image(image, cfg.preprocess, cfg.channel)
+    if channel_name:
+        prepared.channel_name = channel_name
 
     labels = segment(prepared.segmentation, cfg.segmentation)
     labels, cleanup = clean_labels(labels, cfg.segmentation)
@@ -125,6 +136,11 @@ def analyze_array(image: np.ndarray, name: str, cfg: HiveConfig) -> AnalysisResu
         ).skeleton
 
     summary = summarize_measurements(measurements, name, cfg.voxel_unit)
+    if extras is None and cfg.extra_channels:
+        extras = channels.rgb_extras(image, cfg.extra_channels)
+    measurements, summary = channels.add_channel_measurements(
+        measurements, summary, labels, prepared.measurement, extras or {}, cfg,
+    )
     logger.info("%s: %s", name, cleanup.summary())
 
     return AnalysisResult(
@@ -133,8 +149,36 @@ def analyze_array(image: np.ndarray, name: str, cfg: HiveConfig) -> AnalysisResu
     )
 
 
+def _channel_choice(meta: formats.MicroscopeImage, cfg: HiveConfig) -> int:
+    """Index of the channel to analyse in a file with named channels.
+
+    ``"auto"`` takes the channel with the highest standard deviation of its maximum
+    projection -- a contrast heuristic, as for colour images; the resolved name is
+    recorded in the results.
+    """
+    if meta.n_channels == 1:
+        return 0
+    if cfg.channel.lower() == "auto":
+        spread = [float(np.std(meta.volume(i).max(axis=0))) for i in range(meta.n_channels)]
+        return int(np.argmax(spread))
+    return meta.channel_index(cfg.channel)
+
+
+def _scaled(cfg: HiveConfig, meta: formats.MicroscopeImage) -> HiveConfig:
+    """A copy of ``cfg`` using the file's voxel size where the user set none."""
+    from dataclasses import replace
+
+    scaled = replace(cfg)
+    formats.apply_metadata(scaled, meta)
+    return scaled
+
+
 def analyze_image(image_path: str | Path, cfg: HiveConfig) -> AnalysisResult:
     """Run the full 2D pipeline on a single image file.
+
+    OME-TIFF, CZI, ND2 and LIF files are read through :mod:`hive.formats`, so channels
+    can be chosen by name and the pixel size is taken from the file (unless
+    ``cfg`` already sets one).
 
     Args:
         image_path: Image file to analyse.
@@ -149,6 +193,14 @@ def analyze_image(image_path: str | Path, cfg: HiveConfig) -> AnalysisResult:
         SegmentationError: If the selected channel is empty.
     """
     image_path = Path(image_path)
+    if formats.is_microscope_file(image_path):
+        meta = formats.read_microscope(image_path)
+        index = _channel_choice(meta, cfg)
+        extras = {name: meta.plane(name) for name in cfg.extra_channels}
+        return analyze_array(
+            meta.plane(index), image_path.name, _scaled(cfg, meta),
+            extras=extras, channel_name=meta.channel_names[index],
+        )
     return analyze_array(load_image(image_path), image_path.name, cfg)
 
 
@@ -260,6 +312,7 @@ def analyze_stack_planes(stack_path: str | Path, cfg: HiveConfig, workers: int =
         reporting.export_csv(out / "combined_sholl_curves.csv", sholl)
     reporting.export_excel_report(out / "HIVE_2D_report.xlsx", summary, df,
                                   settings=cfg.to_flat_dict(), sholl_curves=sholl)
+    provenance.write_run_record(out, cfg, notes={"planes": todo})
     return {"measurements": df, "summary": summary, "sholl": sholl, "errors": errors}
 
 
@@ -295,6 +348,7 @@ def _write_2d_outputs(result: AnalysisResult, cfg: HiveConfig, stem: str) -> Non
 
     reporting.export_csv(out / f"{stem}_measurements.csv", result.measurements)
     result.outputs["measurements_csv"] = out / f"{stem}_measurements.csv"
+    result.outputs.update(exports.export_label_files(out, stem, result.labels, cfg))
 
 
 def _analyze_one(job: tuple[Path, HiveConfig, bool]) -> tuple:
@@ -435,10 +489,15 @@ def analyze_folder(cfg: HiveConfig, write_per_image: bool = True,
     reporting.export_csv(out / "combined_summary.csv", summary)
     if not sholl.empty:
         reporting.export_csv(out / "combined_sholl_curves.csv", sholl)
+    group_sheets = (
+        stats.write_group_outputs(out, summary, measurements, cfg.conditions, cfg.seed)
+        if cfg.conditions else {}
+    )
     reporting.export_excel_report(
         out / "HIVE_2D_report.xlsx", summary, measurements,
-        settings=cfg.to_flat_dict(), sholl_curves=sholl,
+        settings=cfg.to_flat_dict(), sholl_curves=sholl, extra_sheets=group_sheets,
     )
+    run_record = provenance.write_run_record(out, cfg)
 
     if errors:
         logger.warning("%d of %d images failed", len(errors), len(paths))
@@ -448,8 +507,10 @@ def analyze_folder(cfg: HiveConfig, write_per_image: bool = True,
         "summary": summary,
         "sholl": sholl,
         "errors": errors,
+        "group_stats": group_sheets.get("Group_Stats"),
         "outputs": {"excel": out / "HIVE_2D_report.xlsx",
-                    "measurements_csv": out / "combined_measurements.csv"},
+                    "measurements_csv": out / "combined_measurements.csv",
+                    "run_record": run_record},
     }
 
 
@@ -477,8 +538,31 @@ def analyze_zstack(cfg: HiveConfig, render_gif: bool = False) -> AnalysisResult:
     out = Path(cfg.output_folder)
     out.mkdir(parents=True, exist_ok=True)
 
-    raw = load_zstack(cfg.input_path)
+    if needs_tiling(cfg):
+        logger.warning("Analysing in tiles (large_image.mode=%s): CLAHE is off, and "
+                       "arborization and extra channels are skipped; see hive.tiled.",
+                       cfg.large_image.mode)
+        return analyze_zstack_tiled(cfg)
+
+    user_cfg = cfg
+    extras: dict[str, np.ndarray] = {}
+    channel_label = None
+    source = Path(cfg.input_path)
+    if source.is_file() and formats.is_microscope_file(source):
+        meta = formats.read_microscope(source)
+        index = _channel_choice(meta, cfg)
+        raw = meta.volume(index)
+        extras = {name: meta.volume(name) for name in cfg.extra_channels}
+        channel_label = meta.channel_names[index]
+        cfg = _scaled(cfg, meta)
+        del meta
+    else:
+        raw = load_zstack(cfg.input_path)
+        if cfg.extra_channels:
+            extras = channels.rgb_extras_volume(raw, cfg.extra_channels)
     prepared = prepare_volume(raw, cfg.preprocess, cfg.channel)
+    if channel_label:
+        prepared.channel_name = channel_label
     del raw  # a z-stack is the largest object in play; drop it as soon as possible
 
     labels = segment(prepared.segmentation, cfg.segmentation)
@@ -503,6 +587,10 @@ def analyze_zstack(cfg: HiveConfig, render_gif: bool = False) -> AnalysisResult:
         ).skeleton
 
     summary = summarize_measurements(measurements, name, cfg.voxel_unit)
+    measurements, summary = channels.add_channel_measurements(
+        measurements, summary, labels, prepared.measurement, extras, cfg,
+    )
+    del extras
     result = AnalysisResult(
         measurements=measurements, summary=summary, labels=labels, prepared=prepared,
         sholl_curves=sholl_curves, cleanup=cleanup, skeleton=skeleton, name=name,
@@ -541,6 +629,8 @@ def analyze_zstack(cfg: HiveConfig, render_gif: bool = False) -> AnalysisResult:
             cfg.voxel_size_xy, cfg.voxel_size_z,
         )
 
+    result.outputs.update(exports.export_label_files(out, "HIVE_3D", labels, cfg))
     result.outputs["excel"] = out / "HIVE_3D_report.xlsx"
+    result.outputs["run_record"] = provenance.write_run_record(out, user_cfg)
     logger.info("3D: %s", cleanup.summary())
     return result

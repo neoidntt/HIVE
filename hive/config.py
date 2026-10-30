@@ -8,7 +8,7 @@ silently ignored in the other; this module exists to make that impossible.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Any, Literal
 
 Channel = Literal["auto", "red", "green", "blue", "magenta", "gray"]
@@ -155,6 +155,42 @@ class RenderConfig:
 
 
 @dataclass
+class ExportConfig:
+    """Controls interchange exports for Fiji/ImageJ and napari.
+
+    Attributes:
+        ome_tiff_labels: Write the label image as an OME-TIFF (opens in napari
+            and Fiji with correct physical scale).
+        imagej_rois: Write each object outline as an ImageJ ROI, zipped into one
+            file that Fiji's ROI Manager opens directly.
+    """
+
+    ome_tiff_labels: bool = True
+    imagej_rois: bool = True
+
+
+@dataclass
+class LargeImageConfig:
+    """Controls tiled processing of stacks that do not fit in memory.
+
+    Attributes:
+        mode: ``"auto"`` tiles only when the stack would not fit in RAM,
+            ``"off"`` keeps the old behaviour of refusing it, ``"force"`` always
+            tiles (used for testing).
+        tile_size: Edge length (px) of the square tile core. ``0`` = choose from
+            available memory.
+        halo: Extra pixels read around each tile so background subtraction and
+            smoothing see the same neighbourhood as in a whole-image run. Objects
+            reaching further than this from their centre are flagged as
+            ``tile_clipped``. ``0`` = choose from the preprocessing radii.
+    """
+
+    mode: Literal["auto", "off", "force"] = "auto"
+    tile_size: int = 0
+    halo: int = 0
+
+
+@dataclass
 class HiveConfig:
     """Top-level run configuration.
 
@@ -171,6 +207,12 @@ class HiveConfig:
         save_intermediate: Write channel/preprocessed/baseline QC images.
         mesh_step_size: Marching-cubes stride for the 3D mesh; higher = coarser.
         seed: Random seed for any stochastic step, for reproducibility.
+        extra_channels: Further channels to measure at the segmented objects, by
+            colour name (RGB images) or by name/number from the file's metadata.
+            The main ``channel`` finds the objects; these are only measured, and
+            colocalization with the main channel is reported for each.
+        conditions: Maps an image name to an experimental condition, for the
+            group comparison in the report. Empty = no comparison.
     """
 
     input_path: str = "input_images"
@@ -186,10 +228,15 @@ class HiveConfig:
     mesh_step_size: int = 2
     seed: int = 0
 
+    extra_channels: list[str] = field(default_factory=list)
+    conditions: dict[str, str] = field(default_factory=dict)
+
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
     arbor: ArborConfig = field(default_factory=ArborConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    export: ExportConfig = field(default_factory=ExportConfig)
+    large_image: LargeImageConfig = field(default_factory=LargeImageConfig)
 
     def __post_init__(self) -> None:
         """Validate on construction so bad parameters fail before any I/O.
@@ -230,6 +277,11 @@ class HiveConfig:
             raise ValueError(
                 f"gaussian_sigma must be >= 0, got {self.preprocess.gaussian_sigma}"
             )
+        if self.large_image.tile_size < 0 or self.large_image.halo < 0:
+            raise ValueError("tile_size and halo must be >= 0 (0 = automatic)")
+        if self.large_image.mode not in ("auto", "off", "force"):
+            raise ValueError(f"large_image.mode must be auto, off or force, "
+                             f"got {self.large_image.mode!r}")
 
     def to_flat_dict(self) -> dict[str, Any]:
         """Flatten to a single-level dict for the report's Settings sheet.
@@ -246,3 +298,55 @@ class HiveConfig:
             else:
                 flat[key] = value
         return flat
+
+    def to_dict(self) -> dict[str, Any]:
+        """Nested, JSON-serialisable form of the whole configuration.
+
+        Returns:
+            A dict that :meth:`from_dict` turns back into an equal config.
+        """
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "HiveConfig":
+        """Rebuild a configuration saved by :meth:`to_dict`.
+
+        Unknown keys are rejected rather than ignored: a setting that is silently
+        dropped on reload would give a different result from the saved run
+        without any sign of it. Keys missing from an older file take their
+        defaults.
+
+        Args:
+            data: Nested dict, as read back from JSON.
+
+        Returns:
+            The validated configuration.
+
+        Raises:
+            ValueError: On an unknown key or an out-of-range value.
+        """
+        data = dict(data)
+        sections = {
+            "preprocess": PreprocessConfig, "segmentation": SegmentationConfig,
+            "arbor": ArborConfig, "render": RenderConfig, "export": ExportConfig,
+            "large_image": LargeImageConfig,
+        }
+        unknown = set(data) - {f.name for f in fields(cls)}
+        for name, section_cls in sections.items():
+            if name not in data:
+                continue
+            values = dict(data[name])
+            bad = set(values) - {f.name for f in fields(section_cls)}
+            unknown |= {f"{name}.{key}" for key in bad}
+            # JSON has no tuples; per-axis radii/sigmas must come back as tuples.
+            data[name] = section_cls(**{
+                key: tuple(value) if isinstance(value, list) else value
+                for key, value in values.items() if key not in bad
+            })
+        if unknown:
+            raise ValueError(
+                "Settings contain parameters this version of HIVE does not know: "
+                f"{sorted(unknown)}. Refusing to load them, because ignoring a setting "
+                "would give a different result from the saved run."
+            )
+        return cls(**data)

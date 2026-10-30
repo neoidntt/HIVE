@@ -54,7 +54,9 @@ def otsu_threshold(image: np.ndarray, scale: float = 1.0) -> float:
     return float(filters.threshold_otsu(img) * float(scale))
 
 
-def threshold_segmentation(image: np.ndarray, cfg: SegmentationConfig) -> np.ndarray:
+def threshold_segmentation(
+    image: np.ndarray, cfg: SegmentationConfig, threshold: float | None = None,
+) -> np.ndarray:
     """Segment by (scaled) Otsu thresholding, then clean the mask.
 
     Works on both 2D images and 3D volumes; the structuring element for the
@@ -63,6 +65,9 @@ def threshold_segmentation(image: np.ndarray, cfg: SegmentationConfig) -> np.nda
     Args:
         image: Segmentation image (2D or 3D), already enhanced.
         cfg: Segmentation parameters.
+        threshold: Use this value instead of computing Otsu on ``image``. Tiled
+            processing passes one threshold found over the whole volume, so every
+            tile is cut at the same intensity.
 
     Returns:
         Boolean mask, same shape as ``image``. An all-False mask is a valid
@@ -77,7 +82,8 @@ def threshold_segmentation(image: np.ndarray, cfg: SegmentationConfig) -> np.nda
         raise ValueError(f"threshold_segmentation expects a 2D or 3D array, got {img.shape}")
 
     try:
-        threshold = otsu_threshold(img, cfg.threshold_scale)
+        if threshold is None:
+            threshold = otsu_threshold(img, cfg.threshold_scale)
     except SegmentationError as exc:
         # A blank field is a legitimate result ("no objects here"), not a failure.
         # Raising would drop the image from the batch summary entirely, turning a

@@ -208,7 +208,8 @@ def select_channel_volume(stack: np.ndarray, channel: Channel = "auto") -> tuple
 
 
 def build_segmentation_image(
-    measurement: np.ndarray, cfg: PreprocessConfig, per_plane_clahe: bool = True
+    measurement: np.ndarray, cfg: PreprocessConfig, per_plane_clahe: bool = True,
+    rescale: bool = True,
 ) -> np.ndarray:
     """Build the contrast-enhanced image used ONLY for object detection.
 
@@ -227,9 +228,13 @@ def build_segmentation_image(
         cfg: Preprocessing parameters.
         per_plane_clahe: For 3D input, equalise each plane separately. True is
             much faster than 3D CLAHE and usually sufficient.
+        rescale: ``False`` stops after smoothing, leaving the array in the
+            measurement's intensity scale (no min-max, no CLAHE). Tiled processing
+            needs this so one threshold means the same thing in every tile.
 
     Returns:
-        Enhanced array in ``[0, 1]``, float32, same shape as input.
+        Enhanced array in ``[0, 1]``, float32, same shape as input (or the smoothed
+        array in the original scale when ``rescale=False``).
     """
     from .hardware import gaussian_filter_auto
 
@@ -246,6 +251,9 @@ def build_segmentation_image(
         # and the in-place rescale below would silently corrupt the one array that
         # every reported number is measured from.
         img = np.array(measurement, dtype=np.float32)
+
+    if not rescale:
+        return img
 
     # In-place rescale. `(img - lo) / (hi - lo)` costs two extra full-size
     # temporaries; on a large volume that is the difference between running and

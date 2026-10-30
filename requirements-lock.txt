@@ -1,4 +1,4 @@
-# Exact versions HIVE 2.0 was developed and verified against.
+# Exact versions HIVE 0.0.3 was tested against.
 # Install this (not requirements.txt) when you need a reproducible analysis
 # environment -- e.g. re-running an analysis for a revision or a reviewer.
 #
@@ -6,22 +6,32 @@
 #   source .venv/bin/activate
 #   pip install -r requirements-lock.txt
 #
-# Test suite status against these versions: 65 passed, 0 failed, 0 deprecation
-# warnings from HIVE code (verified 2026-07-16 on macOS/arm64, Python 3.14).
+# Test suite status against these versions: 199 passed, 0 failed
+# (verified 2026-10-29 on Linux x86_64, Python 3.14.6). The same suite also passes on
+# Python 3.11, 3.12 and 3.13 with the newest releases that each Python allows
+# (requirements.txt). czifile 2026.x needs a recent Python; on 3.11 use requirements.txt.
+# Python 3.10 is not supported: its older tifffile cannot write the OME label file.
+# hive_run.json records the versions of every run, so a result can be compared with this list.
 
-numpy==2.5.1
-scipy==1.18.0
+numpy==2.5.4
+scipy==1.18.1
 scikit-image==0.26.0
-pandas==3.0.3
-tifffile==2026.7.14
-matplotlib==3.11.0
-pillow==12.3.0
-plotly==6.9.0
+pandas==3.1.0
+tifffile==2026.10.15
+imagecodecs==2026.10.10
+matplotlib==3.11.2
+pillow==13.0.0
+plotly==7.1.0
 openpyxl==3.1.5
 
-streamlit==1.59.2
-fastapi==0.139.2
-uvicorn==0.51.0
+czifile==2026.10.14
+nd2==0.12.0
+readlif==0.6.6
+roifile==2026.9.22
+
+streamlit==1.66.1
+fastapi==0.162.0
+uvicorn==0.54.0
 python-multipart==0.0.32
 
-pytest==9.1.1
+pytest==9.2.0
