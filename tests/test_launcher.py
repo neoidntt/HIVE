@@ -38,7 +38,7 @@ def test_uv_is_unpacked_from_both_archive_types(tmp_path):
     with tarfile.open(tar_path, "w:gz") as tar:
         tar.add(payload, arcname="uv-x86_64-unknown-linux-gnu/uv")
     out = launcher.extract_uv(tar_path, tmp_path / "t1")
-    assert out.name == "uv" and out.read_bytes() == b"#!/bin/sh\n" and out.stat().st_mode & 0o111
+    assert out.name == "uv" and out.read_bytes() == b"#!/bin/sh\n" and (sys.platform == "win32" or out.stat().st_mode & 0o111)
 
     zip_path = tmp_path / "uv-x.zip"
     with zipfile.ZipFile(zip_path, "w") as z:
