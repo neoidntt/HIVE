@@ -67,9 +67,3 @@ presentation/*.pptx
 *.obj
 *.gif
 *.zip
-
-# --- One-click launcher ---------------------------------------------------
-# Downloaded by launch_hive.py on first start.
-.hive_tools/
-# Frozen launcher build output
-*.spec

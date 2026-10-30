@@ -20,20 +20,6 @@ Examples:
 
         python hive_cli.py --mode 2d --input imgs --voxel-size-xy 0.325 \\
             --unit um --clear-border
-
-    Repeat an earlier run exactly from the record it saved::
-
-        python hive_cli.py --settings old_results/hive_run.json --output rerun
-
-    Measure a second channel and compare two conditions::
-
-        python hive_cli.py --input scans --channel DAPI --extra-channels GFP \\
-            --conditions conditions.csv
-
-    Look at what a file contains, or compare background methods, before a run::
-
-        python hive_cli.py --inspect scan.nd2
-        python hive_cli.py --preview-baseline scan.ome.tif preview.png
 """
 
 from __future__ import annotations
@@ -43,15 +29,8 @@ import logging
 import sys
 from pathlib import Path
 
-from hive.config import (
-    ArborConfig, ExportConfig, HiveConfig, LargeImageConfig, PreprocessConfig, RenderConfig,
-    SegmentationConfig,
-)
-from hive.formats import is_microscope_file, read_microscope
+from hive.config import ArborConfig, HiveConfig, PreprocessConfig, RenderConfig, SegmentationConfig
 from hive.hardware import describe_hardware
-from hive.io_utils import ImageLoadError, load_image
-from hive.provenance import environment_differences, read_run_record
-from hive.stats import load_conditions
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,23 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--mode", default="2d", choices=["2d", "3d"])
-    parser.add_argument("--input", default=None,
-                        help="Image folder (2D) or stack file/folder (3D) [input_images]")
-    parser.add_argument("--output", default=None, help="Results folder [output_results]")
-    parser.add_argument("--seed", type=int, default=0,
-                        help="Random seed for the steps that use one; recorded in hive_run.json")
+    parser.add_argument("--input", default="input_images",
+                        help="Image folder (2D) or stack file/folder (3D)")
+    parser.add_argument("--output", default="output_results")
     parser.add_argument("--channel", default="auto",
-                        help="auto, a colour (red, green, blue, magenta, gray) for RGB images, "
-                             "or a channel name/number for OME-TIFF, CZI, ND2 and LIF files")
-    parser.add_argument("--extra-channels", nargs="+", default=[], metavar="CHANNEL",
-                        help="Further channels to measure at the objects, with colocalization "
-                             "against --channel")
-    parser.add_argument("--settings", metavar="FILE",
-                        help="Load every analysis setting from a hive_run.json (or its folder); "
-                             "only --input, --output, --conditions, --workers and --gif may "
-                             "accompany it")
-    parser.add_argument("--conditions", metavar="CSV",
-                        help="CSV with columns image,condition: compare conditions in the report")
+                        choices=["auto", "red", "green", "blue", "magenta", "gray"])
 
     scale = parser.add_argument_group("physical scale")
     scale.add_argument("--voxel-size-xy", type=float, default=1.0,
@@ -132,21 +99,6 @@ def build_parser() -> argparse.ArgumentParser:
     ren.add_argument("--gif-downsample", type=int, default=2)
     ren.add_argument("--mesh-step-size", type=int, default=2)
 
-    big = parser.add_argument_group("large stacks and exports")
-    big.add_argument("--tiling", default="auto", choices=["auto", "off", "force"],
-                     help="auto: process a 3D stack in tiles only if it will not fit in RAM")
-    big.add_argument("--tile-size", type=int, default=0, help="Tile edge in px (0 = automatic)")
-    big.add_argument("--halo", type=int, default=0,
-                     help="Extra pixels read around each tile (0 = automatic)")
-    big.add_argument("--no-ome-tiff", action="store_true", help="Do not write the OME-TIFF labels")
-    big.add_argument("--no-rois", action="store_true", help="Do not write the ImageJ ROI zip")
-
-    tools = parser.add_argument_group("inspection")
-    tools.add_argument("--inspect", metavar="FILE",
-                       help="Print a file's channels, size and pixel size, then exit")
-    tools.add_argument("--preview-baseline", nargs=2, metavar=("IMAGE", "PNG"),
-                       help="Save a picture comparing the four background methods, then exit")
-
     parser.add_argument("--workers", type=int, default=1,
                         help="Parallel worker processes for 2D batches. Each worker needs its "
                              "own copy of the working set, so workers x per-image peak must fit "
@@ -181,13 +133,10 @@ def config_from_args(args: argparse.Namespace) -> HiveConfig:
         tophat = (z_radius, args.tophat_radius, args.tophat_radius)
 
     return HiveConfig(
-        input_path=args.input or "input_images",
-        output_folder=args.output or "output_results",
+        input_path=args.input,
+        output_folder=args.output,
         mode=args.mode,
         channel=args.channel,
-        extra_channels=list(args.extra_channels),
-        conditions=load_conditions(args.conditions) if args.conditions else {},
-        seed=args.seed,
         voxel_size_xy=args.voxel_size_xy,
         voxel_size_z=args.voxel_size_z,
         voxel_unit=args.unit,
@@ -225,89 +174,7 @@ def config_from_args(args: argparse.Namespace) -> HiveConfig:
             colormap=args.gif_colormap,
             downsample=args.gif_downsample,
         ),
-        export=ExportConfig(
-            ome_tiff_labels=not args.no_ome_tiff, imagej_rois=not args.no_rois,
-        ),
-        large_image=LargeImageConfig(
-            mode=args.tiling, tile_size=args.tile_size, halo=args.halo,
-        ),
     )
-
-
-# Flags that may be combined with --settings; everything else comes from the file.
-_WITH_SETTINGS = {"settings", "input", "output", "conditions", "workers", "gif",
-                  "quiet", "hardware", "inspect", "preview_baseline"}
-
-
-def config_with_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> HiveConfig:
-    """Load ``--settings`` and apply the few flags allowed alongside it.
-
-    Args:
-        args: Parsed arguments.
-        parser: The parser, used to tell which flags the user actually set.
-
-    Returns:
-        The configuration from the saved run.
-
-    Raises:
-        ValueError: If the settings file holds parameters this version does not know.
-        FileNotFoundError: If the file does not exist.
-    """
-    saved = read_run_record(args.settings)
-    defaults = parser.parse_args([])
-    ignored = sorted(k for k in vars(args)
-                     if k not in _WITH_SETTINGS and getattr(args, k) != getattr(defaults, k))
-    if ignored:
-        print("Note: --settings supplies these, so the flags were ignored: "
-              + ", ".join("--" + k.replace("_", "-") for k in ignored), file=sys.stderr)
-    for line in environment_differences(saved.record):
-        print(f"Note: library differs from the saved run: {line}", file=sys.stderr)
-    cfg = saved.config
-    if args.input:
-        cfg.input_path = args.input
-    if args.output:
-        cfg.output_folder = args.output
-    if args.conditions:
-        cfg.conditions = load_conditions(args.conditions)
-    return cfg
-
-
-def inspect_file(path: str) -> int:
-    """Print what a microscope file contains."""
-    meta = read_microscope(path, load_pixels=False)
-    c, z, y, x = meta.shape
-    print(f"{path}\n  format        {meta.source_format}\n  size          "
-          f"{c} channel(s) x {z} plane(s) x {y} x {x} px")
-    for i, name in enumerate(meta.channel_names):
-        print(f"  channel {i}     {name}")
-    scale = (f"{meta.voxel_size_xy:.4g} um" if meta.voxel_size_xy else "not in the file")
-    step = (f"{meta.voxel_size_z:.4g} um" if meta.voxel_size_z else "not in the file")
-    print(f"  pixel size    {scale}\n  z step        {step}")
-    for note in meta.notes:
-        print(f"  note          {note}")
-    return 0
-
-
-def preview_baseline(image_path: str, png_path: str, args: argparse.Namespace) -> int:
-    """Save a picture of the four background methods for one image."""
-    from hive.baseline_preview import center_crop, preview_figure, preview_methods
-    from hive.pipeline import _channel_choice
-    from hive.preprocessing import select_channel
-
-    path = Path(image_path)
-    if is_microscope_file(path):
-        meta = read_microscope(path)
-        plane = meta.volume(_channel_choice(meta, HiveConfig(channel=args.channel)))
-        plane = plane[plane.shape[0] // 2]
-    else:
-        plane = select_channel(load_image(path), args.channel)[0]  # type: ignore[arg-type]
-    pre = PreprocessConfig(
-        baseline_method=args.baseline, tophat_radius=args.tophat_radius,
-    )
-    figure = preview_figure(center_crop(plane), preview_methods(plane, pre))
-    figure.savefig(png_path, dpi=130)
-    print(f"Saved {png_path}")
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -330,18 +197,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        if args.inspect:
-            return inspect_file(args.inspect)
-        if args.preview_baseline:
-            return preview_baseline(*args.preview_baseline, args)
-        cfg = (config_with_settings(args, build_parser()) if args.settings
-               else config_from_args(args))
-    except (ValueError, FileNotFoundError, ImageLoadError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        cfg = config_from_args(args)
+    except ValueError as exc:
+        print(f"Invalid parameters: {exc}", file=sys.stderr)
         return 1
 
     try:
-        if cfg.mode == "3d":
+        if args.mode == "3d":
             from hive.pipeline import analyze_zstack
 
             result = analyze_zstack(cfg, render_gif=args.gif)

@@ -66,14 +66,12 @@ def export_excel_report(
     measurements: pd.DataFrame,
     settings: dict[str, Any] | None = None,
     sholl_curves: pd.DataFrame | None = None,
-    extra_sheets: dict[str, pd.DataFrame] | None = None,
 ) -> Path:
     """Write a multi-sheet Excel report.
 
     Sheets: ``Summary`` (per-image), ``Measurements`` (per-object), optionally
     ``Sholl_Curves`` (the full radius-vs-intersections profiles), and
-    ``Settings`` (every parameter used), and any ``extra_sheets`` (for example the
-    group comparison).
+    ``Settings`` (every parameter used).
 
     Args:
         path: Output ``.xlsx`` path.
@@ -81,7 +79,6 @@ def export_excel_report(
         measurements: Per-object table.
         settings: Flattened run configuration.
         sholl_curves: Long-format Sholl profiles.
-        extra_sheets: Further tables to write, by sheet name.
 
     Returns:
         The written path.
@@ -113,9 +110,6 @@ def export_excel_report(
                 {"parameter": list(settings.keys()),
                  "value": [str(v) for v in settings.values()]}
             ).to_excel(writer, index=False, sheet_name="Settings")
-        for sheet, table in (extra_sheets or {}).items():
-            if table is not None and not table.empty:
-                table.to_excel(writer, index=False, sheet_name=sheet[:31])
     return path
 
 

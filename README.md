@@ -8,105 +8,7 @@ Nothing in the pipeline assumes a particular biology.
 
 ---
 
-## What's new in 0.0.3
-
-0.0.3 adds the nine items below to 0.0.2. The measurement engine and its intensity contract
-are unchanged: the 92 tests of 0.0.2 still pass untouched, next to 107 new ones.
-
-| Feature | What it does | Where |
-|---|---|---|
-| **Saved settings** | Every run writes `hive_run.json` into its output folder: all settings, the random seed, the HIVE release, the versions of the libraries, and a SHA-256 of each input file. Reload it in the app sidebar, or with `--settings`, to repeat the run; the output is identical. Settings this version does not know are refused rather than ignored. | `hive/provenance.py` |
-| **Multi-channel + colocalization** | Find objects on one channel, measure more (`--extra-channels`). Each extra channel gets its intensity per object and Pearson's r and Manders' M1/M2 against the main channel, per object and per image. Channels are chosen by the name stored in the file. | `hive/channels.py` |
-| **Group comparison** | Label images by condition (`--conditions conditions.csv`, or the table in the app). The report gets tests, effect sizes and plots. Images are the unit of replication by default (see below). | `hive/stats.py` |
-| **Background preview** | Shows none / percentile / smooth / top-hat side by side on your own image before you run anything (app expander, or `--preview-baseline IMAGE out.png`). | `hive/baseline_preview.py` |
-| **Large stacks** | A 3D stack that would not fit in memory is analysed in tiles instead of being refused. | `hive/tiled.py` |
-| **More formats** | OME-TIFF, ImageJ TIFF, Zeiss CZI, Nikon ND2 and Leica LIF, with channel names and pixel size read from the file. `--inspect FILE` shows what a file contains. | `hive/formats.py` |
-| **Export** | Labels as OME-TIFF (napari, Fiji) and every object as an ImageJ ROI in one zip (Fiji ROI Manager). | `hive/exports.py` |
-| **Automated checks** | GitHub Actions runs the whole suite on every push and pull request. | `.github/workflows/` |
-| **Easier install** | Double-click launcher that installs everything on first start (see Install). | `launch_hive.py`, `HIVE.bat`, `HIVE.sh`, `environment.yml` |
-
-### What was and was not verified
-
-Tested with files and data created in the test suite: OME-TIFF, ImageJ TIFF, the tiled-versus-whole
-agreement, ROIs rasterised back to the original masks, every statistic against SciPy or a hand
-calculation, the settings round trip, the launcher's first-time install on Linux, and the whole
-suite on Python 3.11, 3.12, 3.13 and 3.14 on Linux.
-
-**Not verified**, so treat with care:
-
-* **CZI, ND2 and LIF** are written against the libraries' documented APIs (`czifile`, `nd2`,
-  `readlif`) and tested with stand-ins for those libraries, not with real microscope files. Run
-  `python hive_cli.py --inspect yourfile.nd2` first and check the channels and pixel size it reports.
-* **Fiji and napari** were not opened here. The ROI zip and OME-TIFF are checked by reading them back
-  with `roifile` and `tifffile`.
-* **Windows and macOS.** The test suite and the launcher were run on Linux only. `HIVE.bat`, the
-  macOS script and the `HIVE.exe` build are untested; the GitHub workflows run the suite on Windows
-  and macOS, and build `HIVE.exe` on a Windows runner.
-* **The GitHub Actions workflows** have not run yet (they only run on GitHub). Their commands were run
-  locally.
-
-### Colocalization
-
-For a channel `X` next to the main channel, per object and per image:
-`coloc_X_pearson`, `coloc_X_manders_m1`, `coloc_X_manders_m2`, plus `X_intensity_mean` and
-`X_integrated_intensity`. Extra channels get the same background subtraction as the main one and no
-contrast enhancement. Pearson's r is NaN (not 0) when it is undefined (fewer than 3 pixels, or no
-variation in a channel). Manders' thresholds are each channel's Otsu threshold; Costes' iterative
-threshold is not implemented. Objects come from the main channel, so these numbers describe
-colocalization *inside the main channel's objects*.
-
-### Comparing conditions
-
-* **Unit of replication.** Cells in one image are not independent, so the default compares one value
-  per image (`--conditions` / the app's "Image" choice). Comparing objects is available but is
-  labelled in the output as treating cells as independent, which makes p-values too small.
-* **Choice of test.** A group needs at least 3 replicates for a p-value. Two groups: Welch's t-test
-  only if both have at least 8 replicates and Shapiro–Wilk does not reject normality, otherwise
-  Mann–Whitney U. With few replicates the smallest possible p-value can be large, so
-  `min_possible_p` is shown beside the result. Three or more groups: Kruskal–Wallis overall, then every
-  pair with Holm's correction.
-* **Effect sizes**, always: Hedges' g with a 95 % confidence interval, and Cliff's delta. Positive
-  means the first-listed group is higher.
-* Output: `group_comparison/` (tables and a plot per metric) and the `Group_Stats` / `Group_Data`
-  sheets of the Excel report.
-
-### Large stacks
-
-`large_image.mode` is `auto` by default: a 3D stack is tiled when ten times its float32 size (the
-measured peak of the whole-volume pipeline) exceeds 85 % of RAM. `--tiling force` and
-`--tile-size N` are there for testing. Each tile is read with a halo of extra pixels, and **one
-threshold is computed over the whole volume** so every tile is cut at the same intensity. On the test
-stack the tiled run found the same nine objects, with the same volumes and an identical mask, as the
-whole-volume run.
-
-Differences from a whole-volume run, all recorded in `hive_run.json`:
-
-* CLAHE is switched off (it rescales per image, which would make one threshold mean different things
-  in different tiles). Compare object counts with `--no-clahe` on your own data.
-* Arborization / Sholl, extra channels, the 3D viewer, the GIF and the ROI zip are not produced.
-  The label image is written as an OME-TIFF, which Fiji and napari open without loading it all.
-* An object that reaches further from its centre than the halo can be cut at a tile edge. Those rows
-  have `tile_clipped = True` and a warning is logged; raise `--halo` or exclude them.
-* A compressed TIFF is decoded again for every tile, which is slow. Uncompressed TIFFs are read
-  directly from disk.
-* Only a single z-stack is supported (no time series or scenes), and only threshold segmentation.
-
-### Formats
-
-| Format | Channel names | Pixel size | Notes |
-|---|---|---|---|
-| OME-TIFF | from the OME-XML | from the OME-XML | tested |
-| ImageJ TIFF | none (numbered) | from the TIFF tags | tested |
-| Zeiss CZI | from the file's XML | from the file's XML | needs `czifile` |
-| Nikon ND2 | from the file | from the file | needs `nd2` |
-| Leica LIF | the lookup-table colour Leica stores | from the file | needs `readlif`; reads the first image in the file |
-
-A file with several time points, scenes or tiles is refused with a message, not flattened. A pixel size
-typed by the user always wins over the one in the file.
-
----
-
-## Changes in 0.0.2 (the first `Improvements` commit)
+## Changes in the `Improvements` branch
 
 This branch compares against `main` as follows. The analysis pipeline in `hive/` is unchanged
 apart from one new module; the work is in the Streamlit app, a new test file and the notebooks.
@@ -157,7 +59,7 @@ apart from one new module; the work is in the Streamlit app, a new test file and
 
 ## Future improvements
 
-Planned next steps. The first group is not implemented yet; the items of the old "Other ideas" list that 0.0.3 built are described under "What's new in 0.0.3".
+Planned next steps, roughly grouped. Nothing here is implemented yet.
 
 ### Planned
 
@@ -187,6 +89,26 @@ Planned next steps. The first group is not implemented yet; the items of the old
     retraction of processes), such as honeybee brain cells in action;
   - detect divisions, merges and cells entering or leaving the field;
   - show tracks as an animation and as per-cell plots.
+
+### Other ideas
+
+- **Saved settings and reproducibility.** Save every run's settings, software versions and seed
+  in the output folder and reload them, so any result can be reproduced.
+- **Multi-channel analysis.** Choose and measure more than one channel, with colocalization
+  statistics between channels.
+- **Group comparison and statistics.** Label images by condition and get comparison plots and
+  basic statistics (effect sizes, with tests that suit the sample size) in the report.
+- **Background subtraction preview.** Show the effect of each background method on the image
+  before running the whole analysis.
+- **Large images.** Tiled or chunked processing for stacks that do not fit in memory, rather than
+  refusing them.
+- **More input formats.** Direct support for more microscope formats (for example LIF, ND2 and
+  OME-TIFF) with voxel size and channel names read from metadata.
+- **Export options.** Export labels as ImageJ ROIs and OME-TIFF so results open in Fiji and napari.
+- **Automated checks.** Continuous integration that runs the test suite on every push, and tests
+  for the new features as they are added.
+- **Easier install.** One-step packaging (a conda environment file or installer) so the
+  app can be started without using the command line.
 
 ---
 
@@ -227,14 +149,14 @@ HIVE 1.x, **every intensity number in them is invalid** — object counts and ar
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | 3.11 or newer | The suite passes on 3.11, 3.12, 3.13 and 3.14. 3.10 is not supported: the older `tifffile` it is limited to cannot write the OME label file the tiled mode uses. The one-click launcher installs Python 3.12 for you if needed. |
+| Python | 3.9 minimum, 3.10+ recommended | 3.9 is the hard syntax floor (`list[Path]` built-in generics are evaluated at runtime in `frontend/streamlit_app.py`). The `hive/` package itself uses `from __future__ import annotations`, so its `float \| tuple[...]` unions are never evaluated. 3.10+ is recommended because current releases of the dependencies below require it. Verified on 3.14.5. |
 | pip + venv | any recent | `venv` ships with CPython. |
 | RAM | ≥ 8 GB | The pipeline holds several copies of a volume at once. A 1 GB stack can peak at many GB — `hive.io_utils.memory_report` estimates this before a run and refuses stacks that would not fit. |
 | OS | macOS / Linux / Windows | No compiled extensions of HIVE's own; everything comes from wheels. |
 
 No system packages, JVM, or GPU are required. Core dependencies (installed automatically from
 `requirements.txt`) are numpy, scipy, scikit-image, pandas, tifffile, imagecodecs, matplotlib,
-pillow, plotly and openpyxl, the file-format readers czifile, nd2, readlif and roifile, plus streamlit / fastapi / uvicorn for the app and API, and pytest
+pillow, plotly and openpyxl, plus streamlit / fastapi / uvicorn for the app and API, and pytest
 for the test suite. Each lower bound in `requirements.txt` marks a specific API HIVE relies on —
 see the comments in that file.
 
@@ -250,31 +172,6 @@ see the comments in that file.
 ---
 
 ## Install
-
-### One step (no command line)
-
-Put the HIVE folder anywhere and double-click the launcher for your system:
-
-| System | Double-click | Needs |
-|---|---|---|
-| Windows | `HIVE.exe` (build it once, see below) or `HIVE.bat` | `HIVE.exe` needs nothing installed; `HIVE.bat` needs any Python 3 installed. Both need an internet connection on the first start |
-| macOS | `Run HIVE App.command` | Python 3 (preinstalled with the Xcode command line tools) |
-| Linux | `HIVE.sh` (after `chmod +x HIVE.sh`) | Python 3 |
-
-The first start takes a few minutes and about 1 GB of disk: it downloads `uv` (a small installer; its SHA-256 is checked),
-creates `.venv` with Python 3.12 (downloading that Python if the computer has none) and installs
-`requirements.txt` into it. Everything, including the download cache and any Python it fetches, stays inside the HIVE folder (`.venv` and `.hive_tools`). Later starts open HIVE straight
-away, and the environment is rebuilt only if `requirements.txt` changes. `python launch_hive.py
---setup-only` installs without starting; `--reinstall` rebuilds from scratch.
-
-`HIVE.exe` is `launch_hive.py` frozen with PyInstaller, so it runs on a computer without Python. Build
-it once on Windows with `pip install pyinstaller pillow` then `python packaging/build_exe.py`, or run the
-**Build launcher** workflow on GitHub and download the artifact. Put it next to `app.py`. It is not
-signed, so Windows SmartScreen may warn the first time ("More info", then "Run anyway").
-
-With conda: `conda env create -f environment.yml`, then `conda activate hive`.
-
-### With pip
 
 Clone the repository and install into a virtual environment:
 
@@ -301,13 +198,13 @@ add the repository root to `PYTHONPATH`:
 
 ```bash
 export PYTHONPATH="/path/to/HIVE:$PYTHONPATH"
-python -c "import hive; print(hive.__release__)"    # 0.0.3
+python -c "import hive; print(hive.__version__)"    # 2.0.0
 ```
 
 Verify the installation:
 
 ```bash
-python -m pytest -q              # 199 tests, all should pass
+pytest tests/ -q                 # 88 tests, all should pass
 python hive_cli.py --hardware    # prints the detected compute device
 ```
 
@@ -331,10 +228,8 @@ threshold explorer.
 streamlit run app.py
 ```
 
-Upload TIF/PNG/OME-TIFF/CZI/ND2/LIF, tune parameters in the sidebar, preview the background
-methods on your image, inspect segmentation side-by-side with the raw image, compare conditions,
-render a rotating 3D GIF, and download CSV, Excel, labels (OME-TIFF), ImageJ ROIs and the
-`hive_run.json` that reproduces the run.
+Upload TIF/PNG/CZI, tune parameters in the sidebar, inspect segmentation side-by-side with
+the raw image, render a rotating 3D GIF, export CSV.
 
 ### Command line
 
@@ -349,21 +244,7 @@ python hive_cli.py --mode 3d --input input_zstacks/my_stack \
 
 # What hardware will it use?
 python hive_cli.py --hardware
-
-# What is in this file?  (channels, size, pixel size)
-python hive_cli.py --inspect scan.nd2
-
-# Compare the four background methods on one image before running anything
-python hive_cli.py --preview-baseline scan.ome.tif preview.png --channel DAPI
-
-# Two channels, colocalization, and a comparison of conditions
-python hive_cli.py --input scans --channel DAPI --extra-channels GFP --conditions conditions.csv
-
-# Repeat an earlier run exactly (settings, seed) from the record it saved
-python hive_cli.py --settings old_results/hive_run.json --output rerun
 ```
-
-`conditions.csv` has two columns, `image` (file name) and `condition`.
 
 ### API
 
@@ -448,7 +329,7 @@ parent soma, and no skeleton analysis fixes that.
 ## Testing
 
 ```bash
-python -m pytest -q     # 199 tests
+pytest tests/ -q     # 88 tests
 ```
 
 Every arborization phantom has an analytically known answer (a 4-arm star must report
@@ -476,22 +357,11 @@ hive/               the package
   pipeline.py       2D and 3D orchestration
   io_utils.py       readers/writers, memory guard
   hardware.py       CUDA/MPS/CPU detection
-  provenance.py     saved settings and run records (hive_run.json)        [0.0.3]
-  formats.py        OME-TIFF, ImageJ TIFF, CZI, ND2, LIF readers           [0.0.3]
-  channels.py       extra channels and colocalization                      [0.0.3]
-  stats.py          group comparison: tests, effect sizes, plots           [0.0.3]
-  baseline_preview.py  side-by-side background methods                     [0.0.3]
-  exports.py        OME-TIFF labels, ImageJ ROIs                           [0.0.3]
-  tiled.py          tiled analysis of stacks larger than memory            [0.0.3]
 app.py              Streamlit application
 hive_cli.py         command line
-launch_hive.py      one-step installer + launcher (HIVE.bat, HIVE.sh, Run HIVE App.command)
-packaging/          builds HIVE.exe from launch_hive.py
-environment.yml     conda environment
-.github/workflows/  tests on every push; HIVE.exe build
 prep_stack.py       stack preparation utility
 api/main.py         FastAPI backend
-tests/              ground-truth test suite (199 tests)
+tests/              ground-truth test suite (88 tests)
 presentation/       figure + slide-deck generation
 HIVE_walkthrough.ipynb
 src/                LEGACY 1.x — superseded, see below

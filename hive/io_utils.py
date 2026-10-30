@@ -20,7 +20,7 @@ import tifffile
 from skimage.io import imread, imsave
 
 VALID_EXTENSIONS: frozenset[str] = frozenset(
-    {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".czi", ".lsm", ".nd2", ".lif"}
+    {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".czi", ".lsm", ".nd2"}
 )
 _TIFF_EXTENSIONS: frozenset[str] = frozenset({".tif", ".tiff", ".lsm"})
 
