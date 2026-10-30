@@ -261,18 +261,25 @@ def find_free_port(start: int = START_PORT, tries: int = 50) -> int:
 
 
 def wait_for_health(port: int, process: subprocess.Popen, timeout: float = START_TIMEOUT) -> bool:
-    """Wait until Streamlit answers on ``port``; ``False`` if it exits or times out."""
-    url = f"http://localhost:{port}/_stcore/health"
+    """Wait until Streamlit answers on ``port``; ``False`` if it exits or times out.
+
+    Asks the IPv4 and the IPv6 loopback address directly instead of the name
+    ``localhost``: on Windows and macOS ``localhost`` tries ``::1`` first and a refused
+    connection there can use up the whole timeout before IPv4 is tried.
+    """
+    urls = [f"http://{host}:{port}/_stcore/health" for host in ("127.0.0.1", "[::1]")]
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             return False
-        try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                if response.status == 200:
-                    return True
-        except OSError:
-            time.sleep(0.5)
+        for url in urls:
+            try:
+                with urllib.request.urlopen(url, timeout=1.5) as response:
+                    if response.status == 200:
+                        return True
+            except OSError:
+                continue
+        time.sleep(0.5)
     return False
 
 
