@@ -109,7 +109,12 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
     def log_message(self, *a): pass
-server = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+class S(http.server.HTTPServer):
+    def server_bind(self):     # HTTPServer.server_bind does a reverse-DNS lookup that can take
+        import socketserver    # tens of seconds on macOS runners; this stub does not need it
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
+server = S(("127.0.0.1", int(sys.argv[1])), H)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 print("stub server up", flush=True)
 time.sleep(float(sys.argv[2]))
