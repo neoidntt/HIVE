@@ -282,6 +282,12 @@ and use a separate `.venv-windows` / `.venv-linux` / `.venv-mac` next to it (the
 when there is no keyboard to ask). Once that separate one exists it is used on later starts without
 asking again. `--reinstall` rebuilds the environment without asking.
 
+**On Linux, use `HIVE.sh`.** `HIVE.exe` also runs under Wine, but Wine older than 10.1 cannot run
+numpy 2.1 or newer (it crashes with `unimplemented function ucrtbase.dll.crealf`). So when the launcher
+finds it is running under such a Wine it installs numpy 2.0.x instead and says so; real Windows and
+Wine 10.1+ are not limited. Tested: with numpy 2.0.2 the whole stack imports and the app starts and
+answers under Wine 10.0, and HIVE's 220 tests pass on numpy 2.0.2.
+
 When the app is ready the launcher opens your browser. If none opens, it prints the address
 (`http://localhost:8501`, or the next free port). If the app cannot start, the window stays open and
 shows the last lines it printed.

@@ -24,6 +24,11 @@ example Linux/macOS vs Windows, or damaged) is never deleted without asking: the
 asks whether to replace it, or to keep it and use a separate ``.venv-<system>`` instead
 (the default, and the answer when there is no keyboard to ask).
 
+Running ``HIVE.exe`` under Wine (a Windows emulator on Linux)? Wine older than 10.1 cannot run
+numpy 2.1 or newer, so there the launcher installs numpy 2.0.x instead (everything else is
+unchanged). On real Windows, or a newer Wine, nothing is limited. Extra pip constraints can also
+be given in the ``HIVE_EXTRA_CONSTRAINTS`` environment variable (comma-separated).
+
 If ``uv`` cannot be downloaded (offline, firewall) and this is not the frozen exe, the
 launcher falls back to ``python -m venv`` with the Python that is running it.
 """
@@ -35,6 +40,7 @@ import collections
 import hashlib
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -53,6 +59,10 @@ UV_DOWNLOAD = "https://github.com/astral-sh/uv/releases/latest/download/"
 READY_MARKER = ".hive_ready"
 MIN_PYTHON = (3, 10)
 START_PORT = 8501
+# Wine older than 10.1 does not implement crealf()/cimagf() (added to Wine in January 2025), which
+# every numpy from 2.1 on calls, so numpy crashes on import there. numpy 2.0.x does not.
+WINE_FIXED_IN = (10, 1)
+WINE_NUMPY_LIMIT = "numpy<2.1"
 START_TIMEOUT = 180          # seconds to wait for the app to answer after it is launched
 
 
@@ -96,12 +106,44 @@ def uv_asset(system: str | None = None, machine: str | None = None) -> str:
     return f"uv-{arch}-{triple}" + (".zip" if system == "windows" else ".tar.gz")
 
 
+def parse_wine_version(text: str) -> tuple[int, ...]:
+    """``"10.0"`` or ``"wine-10.0 (Staging)"`` -> ``(10, 0)``; ``(0,)`` if no number is found."""
+    numbers = re.findall(r"\d+", text)[:2]
+    return tuple(int(n) for n in numbers) or (0,)
+
+
+def wine_version() -> tuple[int, ...] | None:
+    """The Wine version this Windows program runs under, or ``None`` on real Windows."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        get_version = ctypes.WinDLL("ntdll").wine_get_version   # exists only under Wine
+        get_version.restype = ctypes.c_char_p
+        return parse_wine_version((get_version() or b"").decode("ascii", "replace"))
+    except (OSError, AttributeError):
+        return None
+
+
+def active_constraints() -> list[str]:
+    """Version limits to apply when installing on this computer (usually none)."""
+    limits = []
+    wine = wine_version()
+    if wine is not None and wine < WINE_FIXED_IN:
+        limits.append(WINE_NUMPY_LIMIT)
+    extra = os.environ.get("HIVE_EXTRA_CONSTRAINTS", "")
+    limits += [item.strip() for item in extra.split(",") if item.strip()]
+    return limits
+
+
 def requirements_fingerprint(folder: Path) -> str:
     """Hash of what the environment should contain; changes when requirements change."""
     digest = hashlib.sha256()
     digest.update((folder / "requirements.txt").read_bytes())
     digest.update(PYTHON_VERSION.encode())
-    return digest.hexdigest()
+    digest.update("|".join(active_constraints()).encode())   # a limit that appears or goes
+    return digest.hexdigest()                                 # triggers a re-install
 
 
 def verify_checksum(archive: Path, expected_line: str) -> None:
@@ -297,6 +339,18 @@ def build_environment(folder: Path, force: bool = False, env: Path | None = None
     isolated = {**os.environ, "UV_CACHE_DIR": str(tools / "cache"),
                 "UV_PYTHON_INSTALL_DIR": str(tools / "python"), "NO_COLOR": "1"}
 
+    limits = active_constraints()
+    constraint_args: list[str | Path] = []
+    if limits:
+        tools.mkdir(exist_ok=True)
+        constraints = tools / "constraints.txt"
+        constraints.write_text("\n".join(limits) + "\n")
+        constraint_args = ["-c", constraints]
+        wine = wine_version()
+        why = (f"running under Wine {'.'.join(map(str, wine))}, which cannot run newer numpy"
+               if wine is not None and wine < WINE_FIXED_IN else "as requested")
+        log(f"Limiting versions ({', '.join(limits)}): {why}.")
+
     if uv is not None:
         log(f"Preparing Python {PYTHON_VERSION} and the HIVE libraries (first start: a few "
             "minutes, several hundred MB) ...")
@@ -305,14 +359,14 @@ def build_environment(folder: Path, force: bool = False, env: Path | None = None
             # point; never let uv ask its own question.
             _run([uv, "venv", env, "--python", PYTHON_VERSION, "--clear"], cwd=folder,
                  env=isolated)
-        _run([uv, "pip", "install", "--python", python, "-r", requirements], cwd=folder,
-             env=isolated)
+        _run([uv, "pip", "install", "--python", python, "-r", requirements, *constraint_args],
+             cwd=folder, env=isolated)
     else:
         if sys.version_info < MIN_PYTHON:
             raise LauncherError(f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer is needed.")
         if not python.exists():
             _run([sys.executable, "-m", "venv", env])
-        _run([python, "-m", "pip", "install", "-r", requirements], cwd=folder)
+        _run([python, "-m", "pip", "install", "-r", requirements, *constraint_args], cwd=folder)
 
     (env / READY_MARKER).write_text(requirements_fingerprint(folder))
     return python

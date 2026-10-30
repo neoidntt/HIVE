@@ -246,3 +246,61 @@ def test_no_keyboard_means_keep(monkeypatch, capsys):
 def test_uv_is_never_allowed_to_ask_its_own_question():
     source = Path(launcher.__file__).read_text()
     assert '"--clear"' in source and "NO_COLOR" in source
+
+
+# --- Wine older than 10.1 cannot run numpy >= 2.1 (missing crealf/cimagf) ------------------
+
+
+def test_wine_versions_are_read_from_their_text():
+    assert launcher.parse_wine_version("10.0") == (10, 0)
+    assert launcher.parse_wine_version("wine-10.1 (Staging)") == (10, 1)
+    assert launcher.parse_wine_version("") == (0,)
+
+
+def test_old_wine_limits_numpy_and_new_wine_or_real_windows_does_not(monkeypatch):
+    monkeypatch.delenv("HIVE_EXTRA_CONSTRAINTS", raising=False)
+    for version, expected in (((10, 0), ["numpy<2.1"]), ((9, 22), ["numpy<2.1"]),
+                              ((10, 1), []), ((11, 0), []), (None, [])):
+        monkeypatch.setattr(launcher, "wine_version", lambda v=version: v)
+        assert launcher.active_constraints() == expected, version
+
+
+def test_extra_constraints_can_be_given_in_the_environment(monkeypatch):
+    monkeypatch.setattr(launcher, "wine_version", lambda: None)
+    monkeypatch.setenv("HIVE_EXTRA_CONSTRAINTS", "numpy<2.1, scipy<2")
+    assert launcher.active_constraints() == ["numpy<2.1", "scipy<2"]
+
+
+def test_a_new_limit_forces_a_reinstall_so_a_broken_environment_is_repaired(monkeypatch, tmp_path):
+    (tmp_path / "requirements.txt").write_text("numpy\n")
+    monkeypatch.setattr(launcher, "wine_version", lambda: None)
+    without = launcher.requirements_fingerprint(tmp_path)
+    monkeypatch.setattr(launcher, "wine_version", lambda: (10, 0))
+    assert launcher.requirements_fingerprint(tmp_path) != without
+
+
+def test_the_limit_is_passed_to_the_installer(monkeypatch, tmp_path):
+    (tmp_path / "requirements.txt").write_text("numpy\n")
+    (tmp_path / ".venv").mkdir()            # the stand-in installer does not create it
+    monkeypatch.setattr(launcher, "wine_version", lambda: (10, 0))
+    monkeypatch.setattr(launcher, "find_uv", lambda folder: Path("uv"))
+    commands = []
+    monkeypatch.setattr(launcher, "_run", lambda command, **kw: commands.append(
+        [str(c) for c in command]))
+    launcher.build_environment(tmp_path)
+    install = next(c for c in commands if "install" in c)
+    assert "-c" in install
+    assert (tmp_path / ".hive_tools" / "constraints.txt").read_text().strip() == "numpy<2.1"
+
+
+def test_no_limit_means_no_constraint_file_is_used(monkeypatch, tmp_path):
+    (tmp_path / "requirements.txt").write_text("numpy\n")
+    (tmp_path / ".venv").mkdir()
+    monkeypatch.setattr(launcher, "wine_version", lambda: None)
+    monkeypatch.delenv("HIVE_EXTRA_CONSTRAINTS", raising=False)
+    monkeypatch.setattr(launcher, "find_uv", lambda folder: Path("uv"))
+    commands = []
+    monkeypatch.setattr(launcher, "_run", lambda command, **kw: commands.append(
+        [str(c) for c in command]))
+    launcher.build_environment(tmp_path)
+    assert all("-c" not in c for c in commands if "install" in c)
