@@ -99,3 +99,67 @@ def test_the_wrappers_exist_and_call_the_launcher():
     for name in ("HIVE.bat", "HIVE.sh", "Run HIVE App.command"):
         assert "launch_hive.py" in (root / name).read_text(), name
     assert "-r requirements.txt" in (root / "environment.yml").read_text()
+
+
+# --- starting the app: the browser must open, and failures must be visible -----------------
+
+STUB_SERVER = """
+import http.server, sys, threading, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+server = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+print("stub server up", flush=True)
+time.sleep(float(sys.argv[2]))
+"""
+
+
+def test_a_busy_port_is_skipped():
+    import socket
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        port = busy.getsockname()[1]
+        assert launcher.find_free_port(port, tries=5) != port
+
+
+def test_the_browser_is_opened_once_the_app_answers(tmp_path):
+    port = launcher.find_free_port(8700)
+    opened = []
+    code = launcher.serve([sys.executable, "-c", STUB_SERVER, str(port), "1.5"], tmp_path, port,
+                          open_browser=lambda url: opened.append(url) or True, timeout=30)
+    assert code == 0 and opened == [f"http://localhost:{port}"]
+
+
+def test_a_missing_browser_prints_the_address_instead_of_failing(tmp_path, capsys):
+    port = launcher.find_free_port(8710)
+    launcher.serve([sys.executable, "-c", STUB_SERVER, str(port), "1"], tmp_path, port,
+                   open_browser=lambda url: False, timeout=30)
+    assert f"Open this address yourself: http://localhost:{port}" in capsys.readouterr().out
+
+
+def test_an_app_that_crashes_shows_its_output_and_does_not_open_a_browser(tmp_path):
+    opened = []
+    crash = "import sys; print('ModuleNotFoundError: no module named streamlit'); sys.exit(1)"
+    with pytest.raises(launcher.LauncherError, match="no module named streamlit"):
+        launcher.serve([sys.executable, "-c", crash], tmp_path, 8799,
+                       open_browser=lambda url: opened.append(url), timeout=10)
+    assert opened == []
+
+
+def test_an_app_that_never_answers_is_stopped_after_the_timeout(tmp_path):
+    with pytest.raises(launcher.LauncherError, match="did not start"):
+        launcher.serve([sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, 8798,
+                       open_browser=lambda url: True, timeout=1.5)
+
+
+def test_streamlit_is_started_headless_on_this_computer_only(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(launcher, "serve", lambda command, cwd, port, **k: seen.update(
+        command=[str(c) for c in command], port=port) or 0)
+    launcher.start_app(tmp_path, Path("python"), None)
+    assert "--server.headless=true" in seen["command"]      # no first-run e-mail prompt
+    assert "--server.address=localhost" in seen["command"]
+    assert f"--server.port={seen['port']}" in seen["command"]
+    assert str(tmp_path / "app.py") in seen["command"]

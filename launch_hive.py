@@ -11,7 +11,10 @@ What happens on the first start (a few minutes, then it is skipped):
    and its SHA-256 checksum is checked. If ``uv`` is already installed it is used.
 2. ``uv`` creates ``.venv`` with Python 3.12, downloading that Python if the computer
    has none, and installs everything in ``requirements.txt`` into it.
-3. HIVE opens in your browser. Everything it downloads, including uv's cache and any
+3. HIVE starts on a free local port (8501 or the next free one) and the launcher opens it in
+   your browser once it answers. If no browser opens, the address is printed. If the app
+   fails to start, the last lines of its output are shown and the window waits.
+   HIVE opens in your browser. Everything it downloads, including uv's cache and any
    Python it fetches, stays inside this folder (``.hive_tools`` and ``.venv``).
 
 On later starts only step 3 runs, unless ``requirements.txt`` has changed.
@@ -23,21 +26,29 @@ launcher falls back to ``python -m venv`` with the Python that is running it.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
+import threading
+import time
 import urllib.request
+import webbrowser
 import zipfile
 from pathlib import Path
+from typing import Callable, Sequence
 
 PYTHON_VERSION = "3.12"
 UV_DOWNLOAD = "https://github.com/astral-sh/uv/releases/latest/download/"
 READY_MARKER = ".hive_ready"
 MIN_PYTHON = (3, 10)
+START_PORT = 8501
+START_TIMEOUT = 180          # seconds to wait for the app to answer after it is launched
 
 
 class LauncherError(RuntimeError):
@@ -232,18 +243,103 @@ def build_environment(folder: Path, force: bool = False) -> Path:
     return python
 
 
-def start_app(folder: Path, python: Path, port: int | None) -> int:
-    """Run the Streamlit app and return when the user closes it."""
-    command = [str(python), "-m", "streamlit", "run", str(folder / "app.py"),
-               "--server.headless=false"]
-    if port:
-        command.append(f"--server.port={port}")
-    log("Starting HIVE. Your browser will open; keep this window open while you work, "
-        "and close it (or press Ctrl+C) to stop HIVE.")
+def find_free_port(start: int = START_PORT, tries: int = 50) -> int:
+    """First port from ``start`` that nothing is listening on.
+
+    Raises:
+        LauncherError: If none of ``tries`` consecutive ports is free.
+    """
+    for port in range(start, start + tries):
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise LauncherError(f"No free port between {start} and {start + tries - 1}; "
+                        "close other programs or pass --port.")
+
+
+def wait_for_health(port: int, process: subprocess.Popen, timeout: float = START_TIMEOUT) -> bool:
+    """Wait until Streamlit answers on ``port``; ``False`` if it exits or times out."""
+    url = f"http://localhost:{port}/_stcore/health"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def serve(command: Sequence[str | Path], cwd: Path, port: int,
+          open_browser: Callable[[str], bool] = webbrowser.open,
+          timeout: float = START_TIMEOUT) -> int:
+    """Run the app, open the browser when it answers, and return when it stops.
+
+    Raises:
+        LauncherError: If the app exits or does not answer before ``timeout``; the
+            message carries the last lines it printed.
+    """
+    tail: collections.deque[str] = collections.deque(maxlen=40)
+    process = subprocess.Popen(
+        [str(c) for c in command], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, errors="replace", bufsize=1, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+
+    def pump() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            tail.append(line)
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+
+    if not wait_for_health(port, process, timeout):
+        if process.poll() is None:
+            process.terminate()
+        reader.join(timeout=3)
+        raise LauncherError(
+            "HIVE did not start. The last lines it printed:\n" + "".join(tail)
+            + "\nIf this is not clear, send this text (and your operating system) to whoever "
+              "maintains HIVE.")
+
+    url = f"http://localhost:{port}"
+    log(f"\nHIVE is running at {url}")
     try:
-        return subprocess.call(command, cwd=folder)
+        opened = open_browser(url)
+    except Exception:  # noqa: BLE001 - a missing browser must not stop the app
+        opened = False
+    if not opened:
+        log(f"Could not open a browser automatically. Open this address yourself: {url}")
+    log("Keep this window open while you work; close it (or press Ctrl+C) to stop HIVE.")
+    try:
+        code = process.wait()
     except KeyboardInterrupt:
-        return 0
+        process.terminate()
+        code = 0
+    reader.join(timeout=3)
+    return code
+
+
+def start_app(folder: Path, python: Path, port: int | None) -> int:
+    """Start the Streamlit app on a free port and return when the user closes it.
+
+    ``--server.headless=true`` stops Streamlit asking for an e-mail address on first run
+    (which would wait for input in a window nobody is looking at); the launcher opens the
+    browser itself instead. The server listens on this computer only.
+    """
+    port = port or find_free_port()
+    command = [python, "-m", "streamlit", "run", folder / "app.py", "--server.headless=true",
+               f"--server.port={port}", "--server.address=localhost",
+               "--browser.gatherUsageStats=false"]
+    log(f"Starting HIVE on port {port} ...")
+    return serve(command, folder, port)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -272,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
         return start_app(folder, python, args.port)
     except LauncherError as exc:
         log(f"\nERROR: {exc}")
-        if sys.stdin and sys.stdin.isatty() and os.name == "nt":
+        if sys.stdin and sys.stdin.isatty():
             input("\nPress Enter to close this window.")
         return 1
 

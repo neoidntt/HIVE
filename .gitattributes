@@ -1,0 +1,6 @@
+# Keep the launchers byte-for-byte as committed: a Windows .bat needs CRLF line endings
+# (with LF only, labels and goto can misbehave) and a shell script needs LF.
+*.bat       -text
+*.sh        -text
+*.command   -text
+*.exe       binary

@@ -257,7 +257,7 @@ Put the HIVE folder anywhere and double-click the launcher for your system:
 
 | System | Double-click | Needs |
 |---|---|---|
-| Windows | `HIVE.exe` (build it once, see below) or `HIVE.bat` | `HIVE.exe` needs nothing installed; `HIVE.bat` needs any Python 3 installed. Both need an internet connection on the first start |
+| Windows | `HIVE.exe` (included) or `HIVE.bat` | `HIVE.exe` needs nothing installed; `HIVE.bat` needs any Python 3 installed. Both need an internet connection on the first start |
 | macOS | `Run HIVE App.command` | Python 3 (preinstalled with the Xcode command line tools) |
 | Linux | `HIVE.sh` (after `chmod +x HIVE.sh`) | Python 3 |
 
@@ -267,10 +267,16 @@ creates `.venv` with Python 3.12 (downloading that Python if the computer has no
 away, and the environment is rebuilt only if `requirements.txt` changes. `python launch_hive.py
 --setup-only` installs without starting; `--reinstall` rebuilds from scratch.
 
-`HIVE.exe` is `launch_hive.py` frozen with PyInstaller, so it runs on a computer without Python. Build
-it once on Windows with `pip install pyinstaller pillow` then `python packaging/build_exe.py`, or run the
-**Build launcher** workflow on GitHub and download the artifact. Put it next to `app.py`. It is not
-signed, so Windows SmartScreen may warn the first time ("More info", then "Run anyway").
+`HIVE.exe` is `launch_hive.py` frozen with PyInstaller, so it runs on a computer without Python. A
+copy sits in the HIVE folder next to `app.py`, so it is already inside the zip and tar.gz you download
+from GitHub (and is also attached to the release). Double-click it. It is not signed, so Windows
+SmartScreen may warn the first time ("More info", then "Run anyway"). To rebuild it, push to the
+`exe-build` branch (the **Build launcher** workflow builds and tests it on Windows) or run
+`pip install pyinstaller pillow` then `python packaging/build_exe.py` on Windows.
+
+When the app is ready the launcher opens your browser. If none opens, it prints the address
+(`http://localhost:8501`, or the next free port). If the app cannot start, the window stays open and
+shows the last lines it printed.
 
 With conda: `conda env create -f environment.yml`, then `conda activate hive`.
 
