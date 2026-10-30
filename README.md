@@ -22,7 +22,7 @@ are unchanged: the 92 tests of 0.0.2 still pass untouched, next to 107 new ones.
 | **Large stacks** | A 3D stack that would not fit in memory is analysed in tiles instead of being refused. | `hive/tiled.py` |
 | **More formats** | OME-TIFF, ImageJ TIFF, Zeiss CZI, Nikon ND2 and Leica LIF, with channel names and pixel size read from the file. `--inspect FILE` shows what a file contains. | `hive/formats.py` |
 | **Export** | Labels as OME-TIFF (napari, Fiji) and every object as an ImageJ ROI in one zip (Fiji ROI Manager). | `hive/exports.py` |
-| **Automated checks** | GitHub Actions runs the whole suite on every push and pull request. | `.github/workflows/` |
+| **Automated checks** | GitHub Actions runs the whole suite on every push and pull request, on Linux, Windows and macOS. | `.github/workflows/` |
 | **Easier install** | Double-click launcher that installs everything on first start (see Install). | `launch_hive.py`, `HIVE.bat`, `HIVE.sh`, `environment.yml` |
 
 ### What was and was not verified
@@ -39,11 +39,12 @@ suite on Python 3.11, 3.12, 3.13 and 3.14 on Linux.
   `python hive_cli.py --inspect yourfile.nd2` first and check the channels and pixel size it reports.
 * **Fiji and napari** were not opened here. The ROI zip and OME-TIFF are checked by reading them back
   with `roifile` and `tifffile`.
-* **Windows and macOS.** The test suite and the launcher were run on Linux only. `HIVE.bat`, the
-  macOS script and the `HIVE.exe` build are untested; the GitHub workflows run the suite on Windows
-  and macOS, and build `HIVE.exe` on a Windows runner.
-* **The GitHub Actions workflows** have not run yet (they only run on GitHub). Their commands were run
-  locally.
+* **Windows.** `HIVE.exe` is built and checked on a GitHub Windows runner on every release: the first
+  start installs the libraries, the second start skips the install, and the app answers on its port.
+  The test suite also passes on the Windows and macOS runners. Nobody has yet double-clicked it on a
+  real Windows desktop, so the browser opening and the SmartScreen prompt are unchecked there.
+* **macOS and Linux launchers** (`Run HIVE App.command`, `HIVE.sh`) are tested on Linux only; the
+  macOS one is untested.
 
 ### Colocalization
 
