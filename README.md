@@ -275,6 +275,13 @@ SmartScreen may warn the first time ("More info", then "Run anyway"). To rebuild
 `exe-build` branch (the **Build launcher** workflow builds and tests it on Windows) or run
 `pip install pyinstaller pillow` then `python packaging/build_exe.py` on Windows.
 
+**If a `.venv` folder already exists** and cannot be used on this computer (made on another system,
+for example Linux or macOS when you are on Windows, or damaged), the launcher never deletes it
+unasked. It tells you why and offers two choices: **[R]** replace it with a new one, or **[K]** keep it
+and use a separate `.venv-windows` / `.venv-linux` / `.venv-mac` next to it (the default, and the answer
+when there is no keyboard to ask). Once that separate one exists it is used on later starts without
+asking again. `--reinstall` rebuilds the environment without asking.
+
 When the app is ready the launcher opens your browser. If none opens, it prints the address
 (`http://localhost:8501`, or the next free port). If the app cannot start, the window stays open and
 shows the last lines it printed.

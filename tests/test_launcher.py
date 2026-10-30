@@ -87,7 +87,7 @@ def test_setup_is_skipped_when_the_environment_is_ready(monkeypatch, tmp_path, c
     (tmp_path / "app.py").write_text("")
     (tmp_path / "requirements.txt").write_text("numpy\n")
     monkeypatch.setattr(launcher, "app_dir", lambda: tmp_path)
-    monkeypatch.setattr(launcher, "environment_ready", lambda folder: True)
+    monkeypatch.setattr(launcher, "environment_ready", lambda folder, env=None: True)
     monkeypatch.setattr(launcher, "build_environment",
                         lambda *a, **k: pytest.fail("must not rebuild a ready environment"))
     assert launcher.main(["--setup-only"]) == 0
@@ -168,3 +168,81 @@ def test_streamlit_is_started_headless_on_this_computer_only(monkeypatch, tmp_pa
     assert "--server.address=localhost" in seen["command"]
     assert f"--server.port={seen['port']}" in seen["command"]
     assert str(tmp_path / "app.py") in seen["command"]
+
+
+# --- an existing .venv that this computer cannot use must never be deleted unasked ----------
+
+
+def _foreign_venv(folder: Path) -> Path:
+    """A .venv as another operating system would have left it: no interpreter at our path."""
+    venv = folder / ".venv"
+    other = venv / ("bin/python" if sys.platform == "win32" else "Scripts/python.exe")
+    other.parent.mkdir(parents=True)
+    other.write_text("from another system")
+    return venv
+
+
+def _working_venv(env: Path) -> None:
+    python = launcher.venv_python(env)
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+
+
+def _never_ask(*a):
+    pytest.fail("must not ask when nothing needs deciding")
+
+
+def test_no_environment_means_a_fresh_dot_venv(tmp_path):
+    assert launcher.choose_environment(tmp_path, _never_ask) == tmp_path / ".venv"
+
+
+def test_a_working_environment_is_used_without_asking(tmp_path):
+    _working_venv(tmp_path / ".venv")
+    assert launcher.choose_environment(tmp_path, _never_ask) == tmp_path / ".venv"
+
+
+def test_the_default_keeps_the_foreign_venv_and_uses_a_separate_one(tmp_path):
+    venv = _foreign_venv(tmp_path)
+    chosen = launcher.choose_environment(tmp_path, lambda prompt, default: default)
+    assert chosen == tmp_path / f".venv-{launcher.system_tag()}"
+    assert venv.exists() and any(venv.rglob("python*"))          # untouched
+
+
+def test_the_user_can_choose_to_replace_it(tmp_path):
+    venv = _foreign_venv(tmp_path)
+    chosen = launcher.choose_environment(tmp_path, lambda prompt, default: "R")
+    assert chosen == tmp_path / ".venv" and not venv.exists()
+
+
+def test_the_prompt_explains_what_is_wrong_and_the_two_choices(tmp_path, capsys):
+    _foreign_venv(tmp_path)
+    seen = {}
+    launcher.choose_environment(tmp_path, lambda prompt, default: seen.update(p=prompt) or "k")
+    assert "[R] Replace" in seen["p"] and "[K] Keep" in seen["p"]
+    assert "cannot be used on this computer" in capsys.readouterr().out
+
+
+def test_if_deleting_fails_the_old_one_is_left_alone_and_a_separate_one_is_used(tmp_path, monkeypatch):
+    venv = _foreign_venv(tmp_path)
+    monkeypatch.setattr(launcher.shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(
+        OSError("Directory is not empty")))
+    chosen = launcher.choose_environment(tmp_path, lambda prompt, default: "r")
+    assert chosen == tmp_path / f".venv-{launcher.system_tag()}" and venv.exists()
+
+
+def test_the_separate_environment_is_remembered_so_nobody_is_asked_twice(tmp_path):
+    _foreign_venv(tmp_path)
+    _working_venv(tmp_path / f".venv-{launcher.system_tag()}")
+    assert launcher.choose_environment(tmp_path, _never_ask) == \
+        tmp_path / f".venv-{launcher.system_tag()}"
+
+
+def test_no_keyboard_means_keep(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", None)
+    assert launcher.ask_choice("Choose R or K [K]: ", "k") == "k"
+    assert "no keyboard" in capsys.readouterr().out
+
+
+def test_uv_is_never_allowed_to_ask_its_own_question():
+    source = Path(launcher.__file__).read_text()
+    assert '"--clear"' in source and "NO_COLOR" in source

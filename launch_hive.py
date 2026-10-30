@@ -9,7 +9,7 @@ What happens on the first start (a few minutes, then it is skipped):
 
 1. ``uv`` (a small, fast installer from Astral) is downloaded into ``.hive_tools/``
    and its SHA-256 checksum is checked. If ``uv`` is already installed it is used.
-2. ``uv`` creates ``.venv`` with Python 3.12, downloading that Python if the computer
+2. ``uv`` creates ``.venv`` (see below for an existing one) with Python 3.12, downloading that Python if the computer
    has none, and installs everything in ``requirements.txt`` into it.
 3. HIVE starts on a free local port (8501 or the next free one) and the launcher opens it in
    your browser once it answers. If no browser opens, the address is printed. If the app
@@ -18,6 +18,11 @@ What happens on the first start (a few minutes, then it is skipped):
    Python it fetches, stays inside this folder (``.hive_tools`` and ``.venv``).
 
 On later starts only step 3 runs, unless ``requirements.txt`` has changed.
+
+An existing ``.venv`` that cannot be used on this computer (made on another system, for
+example Linux/macOS vs Windows, or damaged) is never deleted without asking: the launcher
+asks whether to replace it, or to keep it and use a separate ``.venv-<system>`` instead
+(the default, and the answer when there is no keyboard to ask).
 
 If ``uv`` cannot be downloaded (offline, firewall) and this is not the frozen exe, the
 launcher falls back to ``python -m venv`` with the Python that is running it.
@@ -183,9 +188,75 @@ def _run(command: list[str | Path], **kwargs) -> None:
         raise LauncherError(f"Command failed ({result.returncode}): {' '.join(map(str, command[:4]))} ...")
 
 
-def environment_ready(folder: Path) -> bool:
-    """Whether ``.venv`` exists, matches ``requirements.txt`` and can import HIVE."""
-    env = folder / ".venv"
+def system_tag() -> str:
+    """Short name of this operating system, used for a separate environment folder."""
+    return {"windows": "windows", "darwin": "mac", "linux": "linux"}.get(
+        platform.system().lower(), "other")
+
+
+def env_usable(env: Path) -> bool:
+    """Whether an environment folder has an interpreter that belongs to this system."""
+    return venv_python(env).exists()
+
+
+def ask_choice(prompt: str, default: str) -> str:
+    """Ask on the keyboard; ``default`` when there is nobody to ask."""
+    if not (sys.stdin and sys.stdin.isatty()):
+        log(prompt + f"\n(no keyboard available: answering '{default}')")
+        return default
+    try:
+        answer = input(prompt).strip().lower()
+    except EOFError:
+        return default
+    return answer or default
+
+
+def choose_environment(folder: Path, ask: Callable[[str, str], str] = ask_choice) -> Path:
+    """Pick the environment folder to use, asking before anything is deleted.
+
+    * ``.venv`` is used if it works on this computer.
+    * A ``.venv-<system>`` that works is used next (the earlier answer "keep").
+    * If ``.venv`` exists but cannot be used here (made on another system, or damaged),
+      the user chooses: [R]eplace it, or [K]eep it and use ``.venv-<system>`` (default).
+    * With no ``.venv`` at all, a fresh one is made.
+
+    Returns:
+        The environment folder to build or start.
+    """
+    main_env = folder / ".venv"
+    separate = folder / f".venv-{system_tag()}"
+    if env_usable(main_env):
+        return main_env
+    if env_usable(separate):
+        return separate
+    if not main_env.exists():
+        return main_env
+
+    log(f"\nA folder named .venv already exists in {folder}\n"
+        f"but it cannot be used on this computer ({system_tag()}): it has no "
+        f"{venv_python(Path('.venv'))}.\n"
+        "It was probably created on another system, or is damaged.")
+    answer = ask(
+        "  [R] Replace it with a new one made for this computer (deletes the old .venv)\n"
+        f"  [K] Keep it, and use a separate environment ({separate.name}) instead\n"
+        "Choose R or K [K]: ", "k")
+    if answer.strip().lower().startswith("r"):
+        try:
+            shutil.rmtree(main_env)
+            return main_env
+        except OSError as exc:
+            log(f"Could not delete .venv ({exc}). Using {separate.name} instead and leaving "
+                ".venv alone.")
+    else:
+        log(f"Keeping .venv. Using {separate.name}.")
+    if separate.exists() and not env_usable(separate):
+        shutil.rmtree(separate, ignore_errors=True)       # our own half-made folder
+    return separate
+
+
+def environment_ready(folder: Path, env: Path | None = None) -> bool:
+    """Whether the environment exists, matches ``requirements.txt`` and can import HIVE."""
+    env = env or folder / ".venv"
     python = venv_python(env)
     marker = env / READY_MARKER
     if not python.exists() or not marker.exists():
@@ -197,8 +268,8 @@ def environment_ready(folder: Path) -> bool:
     return probe.returncode == 0
 
 
-def build_environment(folder: Path, force: bool = False) -> Path:
-    """Create or update ``.venv`` with everything in ``requirements.txt``.
+def build_environment(folder: Path, force: bool = False, env: Path | None = None) -> Path:
+    """Create or update the environment with everything in ``requirements.txt``.
 
     Returns:
         The environment's Python interpreter.
@@ -206,7 +277,7 @@ def build_environment(folder: Path, force: bool = False) -> Path:
     Raises:
         LauncherError: If it cannot be built; the message says what to try.
     """
-    env = folder / ".venv"
+    env = env or folder / ".venv"
     python = venv_python(env)
     if force:
         shutil.rmtree(env, ignore_errors=True)
@@ -222,14 +293,18 @@ def build_environment(folder: Path, force: bool = False) -> Path:
     # Keep uv's download cache and any Python it fetches inside the HIVE folder, so deleting
     # the folder removes everything.
     tools = folder / ".hive_tools"
+    # NO_COLOR: plain Windows consoles (and Wine) print uv's colour codes as garbage.
     isolated = {**os.environ, "UV_CACHE_DIR": str(tools / "cache"),
-                "UV_PYTHON_INSTALL_DIR": str(tools / "python")}
+                "UV_PYTHON_INSTALL_DIR": str(tools / "python"), "NO_COLOR": "1"}
 
     if uv is not None:
         log(f"Preparing Python {PYTHON_VERSION} and the HIVE libraries (first start: a few "
             "minutes, several hundred MB) ...")
         if not python.exists():
-            _run([uv, "venv", env, "--python", PYTHON_VERSION], cwd=folder, env=isolated)
+            # --clear: the choice about an existing folder was made (by the user) before this
+            # point; never let uv ask its own question.
+            _run([uv, "venv", env, "--python", PYTHON_VERSION, "--clear"], cwd=folder,
+                 env=isolated)
         _run([uv, "pip", "install", "--python", python, "-r", requirements], cwd=folder,
              env=isolated)
     else:
@@ -354,7 +429,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install (first time) and start HIVE")
     parser.add_argument("--setup-only", action="store_true",
                         help="Install the environment but do not start the app")
-    parser.add_argument("--reinstall", action="store_true", help="Rebuild .venv from scratch")
+    parser.add_argument("--reinstall", action="store_true",
+                        help="Rebuild the environment from scratch (deletes it without asking)")
     parser.add_argument("--port", type=int, help="Port for the app (default 8501)")
     args = parser.parse_args(argv)
 
@@ -364,10 +440,11 @@ def main(argv: list[str] | None = None) -> int:
         if not (folder / "app.py").exists() or not (folder / "requirements.txt").exists():
             raise LauncherError(f"app.py and requirements.txt were not found in {folder}. "
                                 "Keep the launcher inside the HIVE folder.")
-        if args.reinstall or not environment_ready(folder):
-            python = build_environment(folder, force=args.reinstall)
+        env = choose_environment(folder)
+        if args.reinstall or not environment_ready(folder, env):
+            python = build_environment(folder, force=args.reinstall, env=env)
         else:
-            python = venv_python(folder / ".venv")
+            python = venv_python(env)
             log("Environment is ready.")
         if args.setup_only:
             log("Setup finished.")
