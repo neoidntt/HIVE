@@ -1,0 +1,56 @@
+# HIVE core dependencies.
+#
+# Lower bounds are deliberate, not decorative -- each one marks an API HIVE relies on:
+#   scikit-image >=0.19  : `intensity_mean` / `axis_major_length` regionprops names.
+#                          Below this they are `mean_intensity` / `major_axis_length`.
+#   numpy        >=1.24  : stable NEP-50 promotion rules.
+#   pandas       >=2.0   : consistent `to_csv`/`ExcelWriter` behaviour.
+#
+# Verified against the exact versions in requirements-lock.txt. For a reproducible
+# analysis environment, install that file instead -- an unpinned scientific stack
+# means a result you cannot reproduce in six months.
+
+numpy>=1.24
+scipy>=1.10
+scikit-image>=0.19
+pandas>=2.0
+tifffile>=2023.1.1
+imagecodecs>=2023.1.1      # decodes compressed TIFF variants tifffile alone cannot
+matplotlib>=3.7            # colormaps for 3D rendering; Sholl plots
+pillow>=9.5                # GIF encoding with a shared adaptive palette
+plotly>=5.14               # interactive 3D mesh viewer, Sholl charts
+openpyxl>=3.1              # multi-sheet Excel reports (CSV export needs nothing extra)
+xlsxwriter>=3.1            # optional: writes the same Excel report ~3x faster than openpyxl
+
+# --- Microscope file formats and ImageJ export (added in 0.0.3) ---
+# OME-TIFF and ImageJ TIFF are read by tifffile above; these cover the vendor formats
+# and the ROI export. Each is imported only when that format or export is used.
+czifile>=2019.7.2          # Zeiss .czi (older Pythons get an older release)
+nd2>=0.10                  # Nikon .nd2
+readlif>=0.6.5             # Leica .lif
+roifile>=2023.1.1          # writes ImageJ ROI zips for Fiji
+zarr>=3.0                  # lets huge compressed TIFFs be read in pieces (files larger than memory)
+
+# --- Web app / API ---
+streamlit>=1.32
+fastapi>=0.100
+uvicorn[standard]>=0.23
+python-multipart>=0.0.6    # required by FastAPI for file uploads
+
+# --- Testing ---
+pytest>=7.4
+
+# --- OPTIONAL: deep-learning segmentation -------------------------------------
+# Large download (~2 GB with CUDA wheels) and slow on CPU. HIVE degrades cleanly
+# without it: `--method cellpose` raises a clear ImportError, everything else works.
+# Thresholding often beats Cellpose on connected tissue such as neuropil, which is
+# what Cellpose was NOT trained on.
+#   pip install cellpose torch torchvision
+#
+# torch also enables GPU acceleration (CUDA / Apple MPS) in hive.hardware. Note the
+# measured reality: the CPU pipeline runs a 31 MB stack in ~1 s, so a GPU only pays
+# off for large volumes or long GIF rotation sweeps. Memory is the real constraint.
+
+# --- OPTIONAL: Fiji/ImageJ bridge ---------------------------------------------
+# Isolated on purpose: it needs a JVM and Maven, and breaks often.
+#   pip install pyimagej jpype1 scyjava jgo

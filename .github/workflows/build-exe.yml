@@ -1,0 +1,71 @@
+name: Build launcher
+
+# HIVE.exe is the double-click launcher for Windows (launch_hive.py frozen with PyInstaller).
+# A copy is committed to the repository root, so it is inside every zip / tar.gz download.
+#
+# * Push to the branch "exe-build" to BUILD a fresh HIVE.exe and test it on Windows; it is
+#   attached to the run as an artifact (commit it to the repository root to ship it).
+# * Push a tag that starts with v (for example v0.0.3) to TEST the committed HIVE.exe and
+#   publish a GitHub release with it attached.
+# Every run does the same three checks on Windows: the first start installs the libraries,
+# the second start finds them and skips the install, and the app actually answers.
+# The file is not signed, so Windows SmartScreen may warn the first time.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["exe-build"]
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build HIVE.exe
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          python -m pip install pyinstaller pillow
+          python packaging/build_exe.py
+      - name: A release uses the committed HIVE.exe
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        run: test -f HIVE.exe || { echo "HIVE.exe is not committed at the repository root"; exit 1; }
+      - name: Check 1 - first start installs the libraries
+        shell: bash
+        run: ./HIVE.exe --setup-only
+      - name: Check 2 - second start finds them and skips the install
+        shell: bash
+        run: ./HIVE.exe --setup-only | tee second.log && grep -q "Environment is ready" second.log
+      - name: Check 3 - the app starts and answers
+        shell: bash
+        run: |
+          ./HIVE.exe --port 8599 > serve.log 2>&1 &
+          ok=0
+          for i in $(seq 1 90); do
+            # the app answers AND the launcher has announced it (and tried to open the browser)
+            if curl -fs http://localhost:8599/_stcore/health > /dev/null \
+               && grep -q "HIVE is running at http://localhost:8599" serve.log; then ok=1; break; fi
+            sleep 2
+          done
+          cat serve.log
+          taskkill //F //T //IM HIVE.exe > /dev/null 2>&1 || true
+          taskkill //F //IM python.exe > /dev/null 2>&1 || true
+          [ "$ok" = 1 ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HIVE-launcher-windows
+          path: HIVE.exe
+      - name: Publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" HIVE.exe \
+            --verify-tag --title "HIVE ${GITHUB_REF_NAME#v}" \
+            --notes "HIVE.exe is also inside the Source code zip / tar.gz, next to app.py. Double-click it: the first start installs the libraries it needs; later starts just open the app. The file is unsigned, so Windows may show an unknown-publisher warning: choose More info, then Run anyway. See the README for what is new and what was not verified."
