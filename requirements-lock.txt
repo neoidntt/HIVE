@@ -1,0 +1,38 @@
+# Exact versions HIVE 0.0.5 was tested against.
+# Install this (not requirements.txt) when you need a reproducible analysis
+# environment -- e.g. re-running an analysis for a revision or a reviewer.
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements-lock.txt
+#
+# Test suite status against these versions: 314 passed, 0 failed
+# (verified on Linux x86_64, Python 3.12.3). Other Python versions (3.11, 3.13, 3.14) were
+# tested with 0.0.3 and are expected to behave the same, but 0.0.4 itself was run on 3.12 only.
+# Python 3.10 is not supported: its older tifffile cannot write the OME label file.
+# hive_run.json records the versions of every run, so a result can be compared with this list.
+
+numpy==2.5.4
+scipy==1.18.1
+scikit-image==0.26.0
+pandas==3.1.0
+tifffile==2026.10.15
+imagecodecs==2026.10.10
+matplotlib==3.11.2
+pillow==13.0.0
+plotly==7.1.0
+openpyxl==3.1.5
+xlsxwriter==3.3.1
+
+czifile==2026.10.14
+nd2==0.12.0
+readlif==0.6.6
+roifile==2026.9.22
+zarr==3.4.2
+
+streamlit==1.66.1
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+
+pytest==9.2.0
